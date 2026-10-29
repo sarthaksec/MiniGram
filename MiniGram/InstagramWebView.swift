@@ -9,167 +9,55 @@ struct InstagramWebView: UIViewRepresentable {
         let script = """
         (function() {
             function isAuthPage() {
-                var p = window.location.pathname;
+                var p = window.location.pathname.toLowerCase();
                 return p.includes('/accounts/login') ||
                        p.includes('/accounts/emailsignup') ||
-                       p.includes('/accounts/onetap') ||
                        document.querySelector('form#loginForm') !== null ||
-                       document.querySelector('input[name="username"]') !== null;
+                       document.querySelector('input[name="username"]') !== null ||
+                       document.querySelector('input[name="password"]') !== null;
             }
-
-            function isLoggedIn() {
-                return document.cookie.includes('ds_user_id') && !isAuthPage();
-            }
-
-            function isSpecificReel(path) {
-                var p = path || window.location.pathname;
-                return /^\\/(reel|reels|p)\\/[A-Za-z0-9_-]+\\/?/i.test(p);
-            }
-
-            // Track active reel path to prevent advancing to next reels
-            let lockedReelPath = isSpecificReel() ? window.location.pathname : null;
-
-            // Kill vertical swipe gestures on single reel view
-            let touchStartY = 0;
-            window.addEventListener('touchstart', function(e) {
-                if (isSpecificReel() && e.touches.length > 0) {
-                    touchStartY = e.touches[0].clientY;
-                }
-            }, { passive: true });
-
-            window.addEventListener('touchmove', function(e) {
-                if (isSpecificReel() && e.touches.length > 0) {
-                    let diffY = Math.abs(e.touches[0].clientY - touchStartY);
-                    if (diffY > 8) {
-                        e.stopPropagation();
-                    }
-                }
-            }, { passive: false });
-
-            // Intercept timeline feed queries to eliminate CPU lag
-            const originalFetch = window.fetch;
-            window.fetch = async function(...args) {
-                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
-                if (url.includes('/api/v1/feed/timeline/') || url.includes('PolarisFeedQuery')) {
-                    return new Response(JSON.stringify({
-                        data: { xdt_api__v1__feed__timeline: { edges: [] } },
-                        status: 'ok'
-                    }), {
-                        status: 200,
-                        headers: { 'Content-Type': 'application/json' }
-                    });
-                }
-                return originalFetch.apply(this, args);
-            };
 
             function updateStyles() {
-                var onSingleReel = isSpecificReel();
-
-                if (onSingleReel && !lockedReelPath) {
-                    lockedReelPath = window.location.pathname;
-                } else if (!onSingleReel) {
-                    lockedReelPath = null;
-                }
-
-                // 1. Single Reel Lock: Freeze vertical scrolling
-                var reelLockStyle = document.getElementById('minigram-reel-lock-style');
-                if (onSingleReel) {
-                    if (!reelLockStyle) {
-                        reelLockStyle = document.createElement('style');
-                        reelLockStyle.id = 'minigram-reel-lock-style';
-                        reelLockStyle.type = 'text/css';
-                        reelLockStyle.innerHTML = `
-                            html, body, main, div[id^="mount"] {
-                                overflow-y: hidden !important;
-                                height: 100vh !important;
-                                max-height: 100vh !important;
-                                touch-action: pan-x !important;
-                            }
-                            div[style*="scroll-snap"], div[style*="overflow-y"] {
-                                scroll-snap-type: none !important;
-                                overflow-y: hidden !important;
-                            }
-                            div[role="tablist"], nav[role="navigation"]:last-of-type {
-                                display: none !important;
-                            }
-                            #minigram-reel-back {
-                                position: fixed !important;
-                                top: 16px !important;
-                                left: 16px !important;
-                                z-index: 9999999 !important;
-                                background: rgba(18, 18, 18, 0.85) !important;
-                                backdrop-filter: blur(12px) !important;
-                                color: #FFFFFF !important;
-                                border: 1px solid rgba(255, 255, 255, 0.25) !important;
-                                border-radius: 20px !important;
-                                padding: 8px 16px !important;
-                                font-size: 14px !important;
-                                font-weight: 600 !important;
-                                box-shadow: 0 4px 12px rgba(0,0,0,0.6) !important;
-                                cursor: pointer !important;
-                            }
-                        `;
-                        (document.head || document.documentElement).appendChild(reelLockStyle);
-                    }
-
-                    var backBtn = document.getElementById('minigram-reel-back');
-                    if (!backBtn) {
-                        backBtn = document.createElement('button');
-                        backBtn.id = 'minigram-reel-back';
-                        backBtn.innerHTML = '‹ Back to Chat';
-                        backBtn.onclick = function() {
-                            window.history.back();
-                        };
-                        document.body.appendChild(backBtn);
-                    }
-                } else {
-                    if (reelLockStyle) reelLockStyle.remove();
-                    var backBtn = document.getElementById('minigram-reel-back');
-                    if (backBtn) backBtn.remove();
-                }
-
-                // 2. Base & Blocker Styles
-                var baseStyle = document.getElementById('minigram-base-style');
-                if (!baseStyle) {
-                    baseStyle = document.createElement('style');
-                    baseStyle.id = 'minigram-base-style';
-                    baseStyle.type = 'text/css';
-                    baseStyle.innerHTML = `
-                        html, body {
-                            background-color: #000000 !important;
-                            color: #FFFFFF !important;
-                            overflow-x: hidden !important;
-                            -webkit-tap-highlight-color: transparent;
-                        }
-                    `;
-                    (document.head || document.documentElement).appendChild(baseStyle);
-                }
-
-                var filterStyle = document.getElementById('minigram-filter-style');
-                if (!isLoggedIn()) {
-                    if (filterStyle) filterStyle.remove();
+                if (isAuthPage()) {
+                    var filter = document.getElementById('minigram-filter-style');
+                    if (filter) filter.remove();
                     return;
                 }
 
+                var filterStyle = document.getElementById('minigram-filter-style');
                 if (!filterStyle) {
                     filterStyle = document.createElement('style');
                     filterStyle.id = 'minigram-filter-style';
                     filterStyle.type = 'text/css';
                     filterStyle.innerHTML = `
-                        main article {
+                        /* Completely hide feed post cards */
+                        article, main article {
                             display: none !important;
                         }
-                        a[href*="/reels/"], a[aria-label*="Reels"], svg[aria-label*="Reels"],
+
+                        /* Completely hide Reels tab in bottom bar */
+                        a[href*="/reels/"], 
+                        a[href*="/reel/"],
+                        a[aria-label*="Reels"], 
+                        svg[aria-label*="Reels"],
                         div[role="tablist"] a[href*="/reels"] {
                             display: none !important;
                         }
-                        a[href*="/explore/"], a[aria-label*="Search and explore"], svg[aria-label*="Search and explore"],
+
+                        /* Completely hide Explore tab in bottom bar */
+                        a[href*="/explore/"], 
+                        a[aria-label*="Search and explore"], 
+                        svg[aria-label*="Search and explore"],
                         div[role="tablist"] a[href*="/explore"] {
                             display: none !important;
                         }
+
+                        /* Hide suggested accounts banners */
                         main section > div:not([role="menu"]) > div > div:has(a[href*="/explore/people/"]) {
                             display: none !important;
                         }
+
+                        /* Hide loading spinners */
                         div[data-visualcompletion="loading-state"] {
                             display: none !important;
                         }
@@ -187,24 +75,23 @@ struct InstagramWebView: UIViewRepresentable {
                 debounceTimer = setTimeout(function() {
                     updateStyles();
                     debounceTimer = null;
-                }, 150);
+                }, 100);
             });
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            // 3. Route Blocker with Next-Reel Lockdown
+            // Hard Client-Side Blocker: Intercept pushState & replaceState for ALL reels and explore
+            function isBlocked(url) {
+                if (!url) return false;
+                var target = String(url).toLowerCase();
+                return target.includes('/reel') || target.includes('/explore');
+            }
+
             const originalPushState = history.pushState;
             history.pushState = function(state, title, url) {
-                var targetUrl = String(url || '');
-
-                if (lockedReelPath && isSpecificReel(targetUrl) && targetUrl !== lockedReelPath) {
-                    console.warn('[MiniGram] Blocked advancing to next reel:', targetUrl);
-                    return;
+                if (isBlocked(url)) {
+                    console.warn('[MiniGram] Blocked navigation to reel/explore:', url);
+                    return; // Abort navigation completely: stay right in chat/current page
                 }
-
-                if (isLoggedIn() && (targetUrl === '/reels' || targetUrl === '/reels/' || targetUrl.includes('/explore'))) {
-                    return originalPushState.apply(this, [state, title, '/']);
-                }
-
                 var res = originalPushState.apply(this, arguments);
                 setTimeout(updateStyles, 50);
                 return res;
@@ -212,17 +99,10 @@ struct InstagramWebView: UIViewRepresentable {
 
             const originalReplaceState = history.replaceState;
             history.replaceState = function(state, title, url) {
-                var targetUrl = String(url || '');
-
-                if (lockedReelPath && isSpecificReel(targetUrl) && targetUrl !== lockedReelPath) {
-                    console.warn('[MiniGram] Blocked replacing state with next reel:', targetUrl);
+                if (isBlocked(url)) {
+                    console.warn('[MiniGram] Blocked replaceState to reel/explore:', url);
                     return;
                 }
-
-                if (isLoggedIn() && (targetUrl === '/reels' || targetUrl === '/reels/' || targetUrl.includes('/explore'))) {
-                    return originalReplaceState.apply(this, [state, title, '/']);
-                }
-
                 var res = originalReplaceState.apply(this, arguments);
                 setTimeout(updateStyles, 50);
                 return res;
@@ -293,14 +173,9 @@ struct InstagramWebView: UIViewRepresentable {
 
             let path = url.path.lowercased()
 
-            // Allow single shared media
-            let isSingleMedia = path.hasPrefix("/reel/") || path.hasPrefix("/p/") || (path.hasPrefix("/reels/") && path.count > 8)
-
-            if (!isSingleMedia && (path == "/reels" || path == "/reels/")) || path.contains("/explore") {
+            // TOTAL BLOCK: Reels & Explore navigation is 100% blocked everywhere
+            if path.contains("/reel") || path.contains("/explore") {
                 decisionHandler(.cancel)
-                if let homeURL = URL(string: "https://www.instagram.com/") {
-                    webView.load(URLRequest(url: homeURL))
-                }
                 return
             }
 
