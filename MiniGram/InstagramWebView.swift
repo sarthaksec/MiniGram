@@ -6,9 +6,9 @@ struct InstagramWebView: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         let contentController = WKUserContentController()
 
-        let modernResponsiveScript = """
+        let script = """
         (function() {
-            // 1. Force modern viewport-fit=cover so WebKit unlocks env(safe-area-inset-*)
+            // 1. Force modern viewport-fit=cover so env(safe-area-inset-*) works
             function setupViewport() {
                 var meta = document.querySelector('meta[name="viewport"]');
                 if (!meta) {
@@ -20,17 +20,15 @@ struct InstagramWebView: UIViewRepresentable {
             }
             setupViewport();
 
-            // Helper: Auth page check
-            function isAuthPage() {
-                var p = window.location.pathname;
-                return p.includes('/accounts/login') ||
-                       p.includes('/accounts/emailsignup') ||
-                       p.includes('/accounts/onetap') ||
-                       document.querySelector('form#loginForm') !== null ||
-                       document.querySelector('input[name="username"]') !== null;
+            // 2. Reliable Check: Is the user logged in?
+            function isLoggedIn() {
+                // If ds_user_id exists in cookies, or bottom tablist/DM icon exists in DOM
+                return document.cookie.includes('ds_user_id') ||
+                       document.querySelector('a[href*="/direct/inbox/"]') !== null ||
+                       document.querySelector('div[role="tablist"]') !== null;
             }
 
-            // 2. Intercept timeline feed network calls to eliminate infinite-scroll lag
+            // 3. Intercept timeline feed network calls to eliminate infinite-scroll lag
             const originalFetch = window.fetch;
             window.fetch = async function(...args) {
                 const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
@@ -46,49 +44,60 @@ struct InstagramWebView: UIViewRepresentable {
                 return originalFetch.apply(this, args);
             };
 
-            // 3. Modern Dynamic Island & Notch fluid styles
-            function applyResponsiveStyles() {
-                var existing = document.getElementById('minigram-responsive-styles');
-                if (isAuthPage()) {
-                    if (existing) existing.remove();
-                    return;
-                }
+            // 4. Inject styles based on Login State
+            function updateStyles() {
+                var loggedIn = isLoggedIn();
 
-                if (!existing) {
-                    var style = document.createElement('style');
-                    style.id = 'minigram-responsive-styles';
-                    style.type = 'text/css';
-                    style.innerHTML = `
-                        /* Global OLED display optimization */
+                // Style for Global Layout & Safe Area (Always active)
+                var layoutStyle = document.getElementById('minigram-layout-style');
+                if (!layoutStyle) {
+                    layoutStyle = document.createElement('style');
+                    layoutStyle.id = 'minigram-layout-style';
+                    layoutStyle.type = 'text/css';
+                    layoutStyle.innerHTML = `
                         html, body {
                             background-color: #000000 !important;
+                            color: #FFFFFF !important;
                             overscroll-behavior-y: contain;
                             overflow-x: hidden !important;
                             -webkit-tap-highlight-color: transparent;
                         }
 
-                        /* Fluid top header under Dynamic Island (iPhone 14 Pro, 15, 16 series) */
+                        /* Safe Area padding so content never gets stuck behind Dynamic Island */
+                        body {
+                            padding-top: max(env(safe-area-inset-top), 54px) !important;
+                            padding-bottom: max(env(safe-area-inset-bottom), 24px) !important;
+                            box-sizing: border-box !important;
+                        }
+
+                        /* If header exists, give it proper safe area top */
                         header, div[role="banner"] {
                             padding-top: max(env(safe-area-inset-top), 48px) !important;
-                            background-color: rgba(0, 0, 0, 0.85) !important;
-                            -webkit-backdrop-filter: blur(20px) !important;
-                            backdrop-filter: blur(20px) !important;
                         }
+                    `;
+                    (document.head || document.documentElement).appendChild(layoutStyle);
+                }
 
-                        /* Bottom tab bar with Home Indicator clearance */
-                        div[role="tablist"], nav[role="navigation"]:last-of-type {
-                            padding-bottom: max(env(safe-area-inset-bottom), 20px) !important;
-                            background-color: rgba(0, 0, 0, 0.9) !important;
-                            -webkit-backdrop-filter: blur(20px) !important;
-                            backdrop-filter: blur(20px) !important;
-                        }
+                // Filter Style (ONLY when logged in - NEVER when on Login Screen)
+                var filterStyle = document.getElementById('minigram-filter-style');
+                if (!loggedIn) {
+                    // User is not logged in: Remove filter rules so login form renders 100% naturally
+                    if (filterStyle) filterStyle.remove();
+                    return;
+                }
 
+                // User is logged in: Apply distraction-free blocker
+                if (!filterStyle) {
+                    filterStyle = document.createElement('style');
+                    filterStyle.id = 'minigram-filter-style';
+                    filterStyle.type = 'text/css';
+                    filterStyle.innerHTML = `
                         /* Hide post feed articles */
                         main article {
                             display: none !important;
                         }
 
-                        /* Hide Reels navigation icon & links */
+                        /* Hide Reels navigation tab & icons */
                         a[href*="/reels/"], 
                         a[aria-label*="Reels"], 
                         svg[aria-label*="Reels"],
@@ -96,7 +105,7 @@ struct InstagramWebView: UIViewRepresentable {
                             display: none !important;
                         }
 
-                        /* Hide Explore / Search navigation icon & links */
+                        /* Hide Explore / Search navigation tab & icons */
                         a[href*="/explore/"], 
                         a[aria-label*="Search and explore"], 
                         svg[aria-label*="Search and explore"],
@@ -114,20 +123,20 @@ struct InstagramWebView: UIViewRepresentable {
                             display: none !important;
                         }
                     `;
-                    (document.head || document.documentElement).appendChild(style);
+                    (document.head || document.documentElement).appendChild(filterStyle);
                 }
             }
 
-            applyResponsiveStyles();
-            document.addEventListener('DOMContentLoaded', applyResponsiveStyles);
+            updateStyles();
+            document.addEventListener('DOMContentLoaded', updateStyles);
 
-            const observer = new MutationObserver(applyResponsiveStyles);
+            const observer = new MutationObserver(updateStyles);
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            // 4. Hard client-side route blocker
+            // 5. Route Blocker (Only active when logged in)
             const blockedPaths = ['/reels', '/explore'];
             function checkBlocked(path) {
-                if (!path) return false;
+                if (!isLoggedIn() || !path) return false;
                 const lower = String(path).toLowerCase();
                 return blockedPaths.some(bp => lower.includes(bp));
             }
@@ -153,7 +162,7 @@ struct InstagramWebView: UIViewRepresentable {
         """
 
         let userScript = WKUserScript(
-            source: modernResponsiveScript,
+            source: script,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         )
@@ -169,11 +178,8 @@ struct InstagramWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
-        
-        // Let CSS handle safe-area padding dynamically via env(safe-area-inset-*)
         webView.scrollView.contentInsetAdjustmentBehavior = .never
 
-        // Native pull-to-refresh
         let refreshControl = UIRefreshControl()
         refreshControl.tintColor = .white
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
@@ -215,6 +221,7 @@ struct InstagramWebView: UIViewRepresentable {
 
             let path = url.path.lowercased()
 
+            // If it's a Reels or Explore link, block it
             if path.contains("/reels") || path.contains("/explore") {
                 decisionHandler(.cancel)
                 if let homeURL = URL(string: "https://www.instagram.com/") {
