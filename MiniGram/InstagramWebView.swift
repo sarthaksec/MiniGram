@@ -6,13 +6,21 @@ struct InstagramWebView: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         let contentController = WKUserContentController()
 
-        // Comprehensive script to fix:
-        // 1. Never break Login/Auth pages
-        // 2. Prevent infinite scroll CPU thrashing
-        // 3. Cleanly hide Feed, Reels, Explore while keeping Stories & DMs intact
-        let injectedScript = """
+        let modernResponsiveScript = """
         (function() {
-            // Helper: Check if currently on an authentication/login page
+            // 1. Force modern viewport-fit=cover so WebKit unlocks env(safe-area-inset-*)
+            function setupViewport() {
+                var meta = document.querySelector('meta[name="viewport"]');
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.name = 'viewport';
+                    (document.head || document.documentElement).appendChild(meta);
+                }
+                meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
+            }
+            setupViewport();
+
+            // Helper: Auth page check
             function isAuthPage() {
                 var p = window.location.pathname;
                 return p.includes('/accounts/login') ||
@@ -22,11 +30,10 @@ struct InstagramWebView: UIViewRepresentable {
                        document.querySelector('input[name="username"]') !== null;
             }
 
-            // 1. Intercept network fetch for timeline feed to prevent infinite scroll freeze
+            // 2. Intercept timeline feed network calls to eliminate infinite-scroll lag
             const originalFetch = window.fetch;
             window.fetch = async function(...args) {
                 const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
-                // Block timeline feed network calls so Instagram stops looping
                 if (url.includes('/api/v1/feed/timeline/') || url.includes('PolarisFeedQuery')) {
                     return new Response(JSON.stringify({
                         data: { xdt_api__v1__feed__timeline: { edges: [] } },
@@ -39,11 +46,9 @@ struct InstagramWebView: UIViewRepresentable {
                 return originalFetch.apply(this, args);
             };
 
-            // 2. Inject CSS rules carefully
-            function applyStyles() {
-                var existing = document.getElementById('minigram-styles');
-                
-                // If on login/auth page, NEVER hide elements
+            // 3. Modern Dynamic Island & Notch fluid styles
+            function applyResponsiveStyles() {
+                var existing = document.getElementById('minigram-responsive-styles');
                 if (isAuthPage()) {
                     if (existing) existing.remove();
                     return;
@@ -51,15 +56,39 @@ struct InstagramWebView: UIViewRepresentable {
 
                 if (!existing) {
                     var style = document.createElement('style');
-                    style.id = 'minigram-styles';
+                    style.id = 'minigram-responsive-styles';
                     style.type = 'text/css';
                     style.innerHTML = `
-                        /* Hide post feed articles only on main content */
+                        /* Global OLED display optimization */
+                        html, body {
+                            background-color: #000000 !important;
+                            overscroll-behavior-y: contain;
+                            overflow-x: hidden !important;
+                            -webkit-tap-highlight-color: transparent;
+                        }
+
+                        /* Fluid top header under Dynamic Island (iPhone 14 Pro, 15, 16 series) */
+                        header, div[role="banner"] {
+                            padding-top: max(env(safe-area-inset-top), 48px) !important;
+                            background-color: rgba(0, 0, 0, 0.85) !important;
+                            -webkit-backdrop-filter: blur(20px) !important;
+                            backdrop-filter: blur(20px) !important;
+                        }
+
+                        /* Bottom tab bar with Home Indicator clearance */
+                        div[role="tablist"], nav[role="navigation"]:last-of-type {
+                            padding-bottom: max(env(safe-area-inset-bottom), 20px) !important;
+                            background-color: rgba(0, 0, 0, 0.9) !important;
+                            -webkit-backdrop-filter: blur(20px) !important;
+                            backdrop-filter: blur(20px) !important;
+                        }
+
+                        /* Hide post feed articles */
                         main article {
                             display: none !important;
                         }
 
-                        /* Hide Reels navigation tab & icons */
+                        /* Hide Reels navigation icon & links */
                         a[href*="/reels/"], 
                         a[aria-label*="Reels"], 
                         svg[aria-label*="Reels"],
@@ -67,7 +96,7 @@ struct InstagramWebView: UIViewRepresentable {
                             display: none !important;
                         }
 
-                        /* Hide Explore / Search navigation tab & icons */
+                        /* Hide Explore / Search navigation icon & links */
                         a[href*="/explore/"], 
                         a[aria-label*="Search and explore"], 
                         svg[aria-label*="Search and explore"],
@@ -75,12 +104,12 @@ struct InstagramWebView: UIViewRepresentable {
                             display: none !important;
                         }
 
-                        /* Hide Suggested accounts carousel under stories */
+                        /* Hide Suggested follow cards */
                         main section > div:not([role="menu"]) > div > div:has(a[href*="/explore/people/"]) {
                             display: none !important;
                         }
 
-                        /* Hide loading spinners at bottom */
+                        /* Hide bottom loading spinners */
                         div[data-visualcompletion="loading-state"] {
                             display: none !important;
                         }
@@ -89,16 +118,13 @@ struct InstagramWebView: UIViewRepresentable {
                 }
             }
 
-            // Run immediately
-            applyStyles();
+            applyResponsiveStyles();
+            document.addEventListener('DOMContentLoaded', applyResponsiveStyles);
 
-            // Observe page changes (Instagram is a SPA)
-            const observer = new MutationObserver(function() {
-                applyStyles();
-            });
+            const observer = new MutationObserver(applyResponsiveStyles);
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            // 3. SPA Route Navigation Blocker
+            // 4. Hard client-side route blocker
             const blockedPaths = ['/reels', '/explore'];
             function checkBlocked(path) {
                 if (!path) return false;
@@ -127,7 +153,7 @@ struct InstagramWebView: UIViewRepresentable {
         """
 
         let userScript = WKUserScript(
-            source: injectedScript,
+            source: modernResponsiveScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         )
@@ -143,8 +169,11 @@ struct InstagramWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
+        
+        // Let CSS handle safe-area padding dynamically via env(safe-area-inset-*)
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
 
-        // Pull to refresh
+        // Native pull-to-refresh
         let refreshControl = UIRefreshControl()
         refreshControl.tintColor = .white
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
@@ -186,9 +215,7 @@ struct InstagramWebView: UIViewRepresentable {
 
             let path = url.path.lowercased()
 
-            // Hard barrier against Reels and Explore routes
             if path.contains("/reels") || path.contains("/explore") {
-                print("[MiniGram] Blocked link navigation to: \(url.absoluteString)")
                 decisionHandler(.cancel)
                 if let homeURL = URL(string: "https://www.instagram.com/") {
                     webView.load(URLRequest(url: homeURL))

@@ -6,6 +6,7 @@ struct MiniGramApp: App {
         WindowGroup {
             ContentView()
                 .preferredColorScheme(.dark)
+                .background(Color.black)
         }
     }
 }
@@ -13,7 +14,7 @@ struct MiniGramApp: App {
 struct ContentView: View {
     var body: some View {
         InstagramWebView()
-            // Protect the top notch/Dynamic Island, extend bottom to screen edge
-            .edgesIgnoringSafeArea(.bottom)
+            // Fluid edge-to-edge for modern OLED screens (iPhone 14 Pro, 15, 15 Pro, 16 series)
+            .ignoresSafeArea()
     }
 }
