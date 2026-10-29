@@ -8,9 +8,7 @@ import android.view.View
 import android.webkit.*
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.io.ByteArrayInputStream
@@ -36,16 +34,110 @@ class MainActivity : AppCompatActivity() {
                 return document.cookie.includes('ds_user_id') && !isAuthPage();
             }
 
-            function updateStyles() {
-                var filterStyle = document.getElementById('minigram-filter-style');
+            function isSpecificReel(path) {
+                var p = path || window.location.pathname;
+                return /^\/(reel|reels|p)\/[A-Za-z0-9_-]+\/?/i.test(p);
+            }
 
-                // When logged out, NEVER hide anything
+            // Track the specific reel URL when opened from DMs
+            let lockedReelPath = isSpecificReel() ? window.location.pathname : null;
+
+            // Touch event suppressor to kill vertical swiping to the next reel
+            let touchStartY = 0;
+            window.addEventListener('touchstart', function(e) {
+                if (isSpecificReel() && e.touches.length > 0) {
+                    touchStartY = e.touches[0].clientY;
+                }
+            }, { passive: true });
+
+            window.addEventListener('touchmove', function(e) {
+                if (isSpecificReel() && e.touches.length > 0) {
+                    let diffY = Math.abs(e.touches[0].clientY - touchStartY);
+                    // If user tries to drag or swipe vertically, kill the event so it won't snap to next reel
+                    if (diffY > 8) {
+                        e.stopPropagation();
+                    }
+                }
+            }, { passive: false });
+
+            function updateStyles() {
+                var onSingleReel = isSpecificReel();
+
+                if (onSingleReel && !lockedReelPath) {
+                    lockedReelPath = window.location.pathname;
+                } else if (!onSingleReel) {
+                    lockedReelPath = null;
+                }
+
+                // 1. Single Reel Lock: Freeze vertical scrolling completely
+                var reelLockStyle = document.getElementById('minigram-reel-lock-style');
+                if (onSingleReel) {
+                    if (!reelLockStyle) {
+                        reelLockStyle = document.createElement('style');
+                        reelLockStyle.id = 'minigram-reel-lock-style';
+                        reelLockStyle.type = 'text/css';
+                        reelLockStyle.innerHTML = `
+                            /* Completely lock scroll & touch drag on single reel view */
+                            html, body, main, div[id^="mount"] {
+                                overflow-y: hidden !important;
+                                height: 100vh !important;
+                                max-height: 100vh !important;
+                                touch-action: pan-x !important;
+                            }
+                            /* Disable CSS scroll-snap lists */
+                            div[style*="scroll-snap"], div[style*="overflow-y"] {
+                                scroll-snap-type: none !important;
+                                overflow-y: hidden !important;
+                            }
+                            /* Hide bottom tablist on reel player for focus */
+                            div[role="tablist"], nav[role="navigation"]:last-of-type {
+                                display: none !important;
+                            }
+                            /* Floating Back Button */
+                            #minigram-reel-back {
+                                position: fixed !important;
+                                top: 16px !important;
+                                left: 16px !important;
+                                z-index: 9999999 !important;
+                                background: rgba(18, 18, 18, 0.85) !important;
+                                backdrop-filter: blur(12px) !important;
+                                color: #FFFFFF !important;
+                                border: 1px solid rgba(255, 255, 255, 0.25) !important;
+                                border-radius: 20px !important;
+                                padding: 8px 16px !important;
+                                font-size: 14px !important;
+                                font-weight: 600 !important;
+                                box-shadow: 0 4px 12px rgba(0,0,0,0.6) !important;
+                                cursor: pointer !important;
+                            }
+                        `;
+                        (document.head || document.documentElement).appendChild(reelLockStyle);
+                    }
+
+                    // Add Floating Back button if missing
+                    var backBtn = document.getElementById('minigram-reel-back');
+                    if (!backBtn) {
+                        backBtn = document.createElement('button');
+                        backBtn.id = 'minigram-reel-back';
+                        backBtn.innerHTML = '‹ Back to Chat';
+                        backBtn.onclick = function() {
+                            window.history.back();
+                        };
+                        document.body.appendChild(backBtn);
+                    }
+                } else {
+                    if (reelLockStyle) reelLockStyle.remove();
+                    var backBtn = document.getElementById('minigram-reel-back');
+                    if (backBtn) backBtn.remove();
+                }
+
+                // 2. Feed Blocker (Active when logged in and not on login page)
+                var filterStyle = document.getElementById('minigram-filter-style');
                 if (!isLoggedIn()) {
                     if (filterStyle) filterStyle.remove();
                     return;
                 }
 
-                // When logged in, hide feed posts, reels, and explore
                 if (!filterStyle) {
                     filterStyle = document.createElement('style');
                     filterStyle.id = 'minigram-filter-style';
@@ -95,34 +187,52 @@ class MainActivity : AppCompatActivity() {
                 debounceTimer = setTimeout(function() {
                     updateStyles();
                     debounceTimer = null;
-                }, 200);
+                }, 150);
             });
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            const blockedPaths = ['/reels', '/explore'];
-            function checkBlocked(path) {
-                if (!isLoggedIn() || !path) return false;
-                const lower = String(path).toLowerCase();
-                return blockedPaths.some(bp => lower.includes(bp));
-            }
-
+            // 3. Route Blocker with Next-Reel Lockdown
             const originalPushState = history.pushState;
             history.pushState = function(state, title, url) {
-                if (checkBlocked(url)) {
-                    console.warn('[MiniGram] Blocked pushState to:', url);
+                var targetUrl = String(url || '');
+
+                // If already on a shared reel, DO NOT allow pushState to a DIFFERENT next reel!
+                if (lockedReelPath && isSpecificReel(targetUrl) && targetUrl !== lockedReelPath) {
+                    console.warn('[MiniGram] Blocked advancing to next reel:', targetUrl);
+                    return;
+                }
+
+                // If generic algorithmic reels or explore, bounce home
+                if (isLoggedIn() && (targetUrl === '/reels' || targetUrl === '/reels/' || targetUrl.includes('/explore'))) {
                     return originalPushState.apply(this, [state, title, '/']);
                 }
-                return originalPushState.apply(this, arguments);
+
+                var res = originalPushState.apply(this, arguments);
+                setTimeout(updateStyles, 50);
+                return res;
             };
 
             const originalReplaceState = history.replaceState;
             history.replaceState = function(state, title, url) {
-                if (checkBlocked(url)) {
-                    console.warn('[MiniGram] Blocked replaceState to:', url);
+                var targetUrl = String(url || '');
+
+                if (lockedReelPath && isSpecificReel(targetUrl) && targetUrl !== lockedReelPath) {
+                    console.warn('[MiniGram] Blocked replacing state with next reel:', targetUrl);
+                    return;
+                }
+
+                if (isLoggedIn() && (targetUrl === '/reels' || targetUrl === '/reels/' || targetUrl.includes('/explore'))) {
                     return originalReplaceState.apply(this, [state, title, '/']);
                 }
-                return originalReplaceState.apply(this, arguments);
+
+                var res = originalReplaceState.apply(this, arguments);
+                setTimeout(updateStyles, 50);
+                return res;
             };
+
+            window.addEventListener('popstate', function() {
+                setTimeout(updateStyles, 50);
+            });
         })();
     """.trimIndent()
 
@@ -131,7 +241,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Native System Bars & Insets: Clean black status bar, no notch collision
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = Color.BLACK
         window.navigationBarColor = Color.BLACK
@@ -194,7 +303,6 @@ class MainActivity : AppCompatActivity() {
 
         webView.webViewClient = object : WebViewClient() {
 
-            // Native Network Interception: Kill timeline feed queries at the C++/Java network stack
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -211,7 +319,6 @@ class MainActivity : AppCompatActivity() {
                 return super.shouldInterceptRequest(view, request)
             }
 
-            // Handle Navigation & block "Open Instagram App" external intent loops
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -220,15 +327,24 @@ class MainActivity : AppCompatActivity() {
                 val scheme = uri.scheme?.lowercase() ?: ""
                 val path = (uri.path ?: "").lowercase()
 
-                // If Instagram tries to open the native app or Play Store via intent://, block it and stay in web
                 if (scheme != "http" && scheme != "https") {
                     return true
                 }
 
-                if (path.contains("/reels") || path.contains("/explore")) {
+                // Only block generic algorithmic Reels tab (/reels or /reels/) and Explore
+                // Allow specific shared reels like /reel/CODE/ or /p/CODE/
+                val isSingleMedia = path.startsWith("/reel/") || path.startsWith("/p/") || (path.startsWith("/reels/") && path.length > 8)
+
+                if (!isSingleMedia && (path == "/reels" || path == "/reels/")) {
                     view?.loadUrl("https://www.instagram.com/")
                     return true
                 }
+
+                if (path.contains("/explore")) {
+                    view?.loadUrl("https://www.instagram.com/")
+                    return true
+                }
+
                 return false
             }
 
