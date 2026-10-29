@@ -8,6 +8,10 @@ import android.view.View
 import android.webkit.*
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
@@ -19,73 +23,29 @@ class MainActivity : AppCompatActivity() {
 
     private val injectionScript = """
         (function() {
-            // 1. Force strict mobile viewport so elements fit 100% screen width
-            function enforceMobileViewport() {
-                var meta = document.querySelector('meta[name="viewport"]');
-                if (!meta) {
-                    meta = document.createElement('meta');
-                    meta.name = 'viewport';
-                    (document.head || document.documentElement).appendChild(meta);
-                }
-                meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+            function isAuthPage() {
+                var p = window.location.pathname;
+                return p.includes('/accounts/login') ||
+                       p.includes('/accounts/emailsignup') ||
+                       p.includes('/accounts/onetap') ||
+                       document.querySelector('form#loginForm') !== null ||
+                       document.querySelector('input[name="username"]') !== null;
             }
-            enforceMobileViewport();
 
             function isLoggedIn() {
-                return document.cookie.includes('ds_user_id') ||
-                       document.querySelector('a[href*="/direct/inbox/"]') !== null ||
-                       document.querySelector('div[role="tablist"]') !== null;
+                return document.cookie.includes('ds_user_id') && !isAuthPage();
             }
 
             function updateStyles() {
-                var loggedIn = isLoggedIn();
-
-                // Base Responsive & Fit Styles
-                var baseStyle = document.getElementById('minigram-base-style');
-                if (!baseStyle) {
-                    baseStyle = document.createElement('style');
-                    baseStyle.id = 'minigram-base-style';
-                    baseStyle.type = 'text/css';
-                    baseStyle.innerHTML = `
-                        *, *:before, *:after {
-                            box-sizing: border-box !important;
-                        }
-
-                        html, body {
-                            width: 100% !important;
-                            max-width: 100vw !important;
-                            background-color: #000000 !important;
-                            color: #FFFFFF !important;
-                            overflow-x: hidden !important;
-                            margin: 0 !important;
-                            padding: 0 !important;
-                            -webkit-tap-highlight-color: transparent;
-                        }
-
-                        /* Prevent main layout elements from spilling outside screen width */
-                        main, section, div[role="main"], header, div[role="banner"] {
-                            width: 100% !important;
-                            max-width: 100vw !important;
-                            box-sizing: border-box !important;
-                        }
-
-                        /* Allow horizontal scrolling ONLY on the Stories tray */
-                        div[role="menu"] {
-                            overflow-x: auto !important;
-                            max-width: 100vw !important;
-                            -webkit-overflow-scrolling: touch !important;
-                        }
-                    `;
-                    (document.head || document.documentElement).appendChild(baseStyle);
-                }
-
-                // Blocker Filter: Only active when logged in
                 var filterStyle = document.getElementById('minigram-filter-style');
-                if (!loggedIn) {
+
+                // When logged out, NEVER hide anything
+                if (!isLoggedIn()) {
                     if (filterStyle) filterStyle.remove();
                     return;
                 }
 
+                // When logged in, hide feed posts, reels, and explore
                 if (!filterStyle) {
                     filterStyle = document.createElement('style');
                     filterStyle.id = 'minigram-filter-style';
@@ -171,6 +131,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Native System Bars & Insets: Clean black status bar, no notch collision
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        window.statusBarColor = Color.BLACK
+        window.navigationBarColor = Color.BLACK
+        val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+        insetsController.isAppearanceLightStatusBars = false
+        insetsController.isAppearanceLightNavigationBars = false
+
         swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout)
         webView = findViewById(R.id.webView)
 
@@ -218,16 +186,8 @@ class MainActivity : AppCompatActivity() {
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
-            
-            // Critical for proper mobile screen fitting (prevents wide desktop overfitting)
             useWideViewPort = true
             loadWithOverviewMode = true
-            textZoom = 100
-            
-            // Clean standard Mobile Chrome user agent (strips the '; wv' webview flag so Instagram delivers its native mobile responsive layout)
-            val defaultUa = userAgentString
-            userAgentString = defaultUa.replace("; wv", "").replace("Version/4.0 ", "")
-
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
@@ -251,13 +211,19 @@ class MainActivity : AppCompatActivity() {
                 return super.shouldInterceptRequest(view, request)
             }
 
-            // Hard URL Interception: Block generic Reels and Explore navigation
+            // Handle Navigation & block "Open Instagram App" external intent loops
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
                 val uri = request?.url ?: return false
+                val scheme = uri.scheme?.lowercase() ?: ""
                 val path = (uri.path ?: "").lowercase()
+
+                // If Instagram tries to open the native app or Play Store via intent://, block it and stay in web
+                if (scheme != "http" && scheme != "https") {
+                    return true
+                }
 
                 if (path.contains("/reels") || path.contains("/explore")) {
                     view?.loadUrl("https://www.instagram.com/")
