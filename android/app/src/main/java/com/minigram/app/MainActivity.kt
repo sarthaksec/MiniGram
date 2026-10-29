@@ -3,7 +3,6 @@ package com.minigram.app
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.webkit.*
@@ -20,6 +19,18 @@ class MainActivity : AppCompatActivity() {
 
     private val injectionScript = """
         (function() {
+            // 1. Force strict mobile viewport so elements fit 100% screen width
+            function enforceMobileViewport() {
+                var meta = document.querySelector('meta[name="viewport"]');
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.name = 'viewport';
+                    (document.head || document.documentElement).appendChild(meta);
+                }
+                meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+            }
+            enforceMobileViewport();
+
             function isLoggedIn() {
                 return document.cookie.includes('ds_user_id') ||
                        document.querySelector('a[href*="/direct/inbox/"]') !== null ||
@@ -29,22 +40,46 @@ class MainActivity : AppCompatActivity() {
             function updateStyles() {
                 var loggedIn = isLoggedIn();
 
+                // Base Responsive & Fit Styles
                 var baseStyle = document.getElementById('minigram-base-style');
                 if (!baseStyle) {
                     baseStyle = document.createElement('style');
                     baseStyle.id = 'minigram-base-style';
                     baseStyle.type = 'text/css';
                     baseStyle.innerHTML = `
+                        *, *:before, *:after {
+                            box-sizing: border-box !important;
+                        }
+
                         html, body {
+                            width: 100% !important;
+                            max-width: 100vw !important;
                             background-color: #000000 !important;
                             color: #FFFFFF !important;
                             overflow-x: hidden !important;
+                            margin: 0 !important;
+                            padding: 0 !important;
                             -webkit-tap-highlight-color: transparent;
+                        }
+
+                        /* Prevent main layout elements from spilling outside screen width */
+                        main, section, div[role="main"], header, div[role="banner"] {
+                            width: 100% !important;
+                            max-width: 100vw !important;
+                            box-sizing: border-box !important;
+                        }
+
+                        /* Allow horizontal scrolling ONLY on the Stories tray */
+                        div[role="menu"] {
+                            overflow-x: auto !important;
+                            max-width: 100vw !important;
+                            -webkit-overflow-scrolling: touch !important;
                         }
                     `;
                     (document.head || document.documentElement).appendChild(baseStyle);
                 }
 
+                // Blocker Filter: Only active when logged in
                 var filterStyle = document.getElementById('minigram-filter-style');
                 if (!loggedIn) {
                     if (filterStyle) filterStyle.remove();
@@ -183,8 +218,16 @@ class MainActivity : AppCompatActivity() {
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
+            
+            // Critical for proper mobile screen fitting (prevents wide desktop overfitting)
             useWideViewPort = true
             loadWithOverviewMode = true
+            textZoom = 100
+            
+            // Clean standard Mobile Chrome user agent (strips the '; wv' webview flag so Instagram delivers its native mobile responsive layout)
+            val defaultUa = userAgentString
+            userAgentString = defaultUa.replace("; wv", "").replace("Version/4.0 ", "")
+
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
