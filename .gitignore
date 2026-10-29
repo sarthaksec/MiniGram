@@ -1,0 +1,13 @@
+# Xcode
+build/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.ipa
+Payload/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db

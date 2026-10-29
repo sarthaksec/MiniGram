@@ -1,0 +1,21 @@
+name: MiniGram
+options:
+  bundleIdPrefix: com.local
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  MiniGram:
+    type: application
+    platform: iOS
+    sources:
+      - MiniGram
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.minigram.app
+      PRODUCT_NAME: MiniGram
+      INFOPLIST_FILE: MiniGram/Info.plist
+      MARKETING_VERSION: "1.0.0"
+      CURRENT_PROJECT_VERSION: "1"
+      GENERATE_INFOPLIST_FILE: NO
+      CODE_SIGNING_ALLOWED: NO
+      CODE_SIGNING_REQUIRED: NO
+      SWIFT_VERSION: "5.9"
