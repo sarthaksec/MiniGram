@@ -27,11 +27,14 @@ class MainActivity : AppCompatActivity() {
                        p.includes('/accounts/emailsignup') ||
                        document.querySelector('form#loginForm') !== null ||
                        document.querySelector('input[name="username"]') !== null ||
-                       document.querySelector('input[name="password"]') !== null;
+                       document.querySelector('input[type="password"]') !== null;
+            }
+
+            function isStories() {
+                return window.location.pathname.toLowerCase().startsWith('/stories');
             }
 
             function updateStyles() {
-                // Never hide on login page
                 if (isAuthPage()) {
                     var filter = document.getElementById('minigram-filter-style');
                     if (filter) filter.remove();
@@ -44,20 +47,21 @@ class MainActivity : AppCompatActivity() {
                     filterStyle.id = 'minigram-filter-style';
                     filterStyle.type = 'text/css';
                     filterStyle.innerHTML = `
-                        /* Completely hide feed post cards */
+                        /* 1. Feed posts completely hidden on home screen */
                         article, main article {
                             display: none !important;
                         }
 
-                        /* Completely hide Reels tab in bottom bar */
+                        /* 2. Reels tab completely hidden in navigation bar */
                         a[href*="/reels/"], 
+                        a[href*="/reel/"],
                         a[aria-label*="Reels"], 
                         svg[aria-label*="Reels"],
                         div[role="tablist"] a[href*="/reels"] {
                             display: none !important;
                         }
 
-                        /* Completely hide Explore tab in bottom bar */
+                        /* 3. Explore tab completely hidden in navigation bar */
                         a[href*="/explore/"], 
                         a[aria-label*="Search and explore"], 
                         svg[aria-label*="Search and explore"],
@@ -65,19 +69,95 @@ class MainActivity : AppCompatActivity() {
                             display: none !important;
                         }
 
-                        /* Hide suggested accounts banners */
+                        /* 4. Hide suggestions carousel & banners */
                         main section > div:not([role="menu"]) > div > div:has(a[href*="/explore/people/"]) {
                             display: none !important;
                         }
 
-                        /* Hide bottom loading spinners */
+                        /* 5. Hide loading spinners */
                         div[data-visualcompletion="loading-state"] {
                             display: none !important;
+                        }
+
+                        /* 6. In DMs: mute shared Reel links visually */
+                        a[href*="/reel/"], 
+                        a[href*="/reels/"] {
+                            opacity: 0.3 !important;
+                            filter: grayscale(1) !important;
+                            cursor: not-allowed !important;
                         }
                     `;
                     (document.head || document.documentElement).appendChild(filterStyle);
                 }
+
+                neutralizeReels();
             }
+
+            function neutralizeReels() {
+                if (isStories()) return;
+
+                // Find all links to reels
+                var links = document.querySelectorAll('a[href*="/reel/"], a[href*="/reels/"]');
+                links.forEach(function(link) {
+                    link.style.pointerEvents = 'none';
+                    link.style.cursor = 'not-allowed';
+                    link.style.opacity = '0.3';
+                    link.style.filter = 'grayscale(100%)';
+
+                    // Lock the clickable message card container
+                    var card = link.closest('div[role="button"], div[tabindex="0"]');
+                    if (card && card.getAttribute('data-minigram-locked') !== 'true') {
+                        card.setAttribute('data-minigram-locked', 'true');
+                        card.style.pointerEvents = 'none';
+                        card.style.cursor = 'not-allowed';
+                        card.style.opacity = '0.3';
+                        card.style.filter = 'grayscale(100%)';
+                    }
+                });
+
+                // Remove any reel modal dialogs mounted outside Stories
+                var dialogs = document.querySelectorAll('div[role="dialog"]');
+                dialogs.forEach(function(d) {
+                    if (d.querySelector('video') || d.querySelector('a[href*="/reel/"]')) {
+                        console.warn('[MiniGram] Removed Reel modal dialog');
+                        d.remove();
+                    }
+                });
+
+                // Pause any non-story videos
+                var videos = document.querySelectorAll('video');
+                videos.forEach(function(v) {
+                    v.pause();
+                    v.removeAttribute('src');
+                });
+            }
+
+            // Capture-phase click blocker: stops clicks on any reel element before React sees it
+            function isReelClick(target) {
+                if (!target) return false;
+                if (target.closest && target.closest('a[href*="/reel/"], a[href*="/reels/"]')) return true;
+
+                var curr = target;
+                for (var i = 0; i < 5 && curr && curr !== document.body && curr !== document.documentElement; i++) {
+                    if (curr.getAttribute && curr.getAttribute('data-minigram-locked') === 'true') return true;
+                    var aria = (curr.getAttribute && curr.getAttribute('aria-label')) || '';
+                    if (aria && aria.toLowerCase().includes('reel')) return true;
+                    if (curr.tagName === 'VIDEO') return true;
+                    curr = curr.parentElement;
+                }
+                return false;
+            }
+
+            document.addEventListener('click', function(e) {
+                if (isStories()) return;
+                if (isReelClick(e.target)) {
+                    console.warn('[MiniGram] Captured and blocked click on DM Reel');
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    return false;
+                }
+            }, true);
 
             updateStyles();
             document.addEventListener('DOMContentLoaded', updateStyles);
@@ -92,18 +172,18 @@ class MainActivity : AppCompatActivity() {
             });
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            // Hard Client-Side Blocker for Reels & Explore
+            // Client-Side Blocker for Reels & Explore pushState/replaceState
             function isBlocked(url) {
                 if (!url) return false;
                 var target = String(url).toLowerCase();
-                return target === '/reels' || target === '/reels/' || target.includes('/explore');
+                return target.includes('/reel') || target.includes('/explore');
             }
 
             const originalPushState = history.pushState;
             history.pushState = function(state, title, url) {
                 if (isBlocked(url)) {
-                    console.warn('[MiniGram] Blocked pushState to:', url);
-                    return originalPushState.apply(this, [state, title, '/']);
+                    console.warn('[MiniGram] Blocked pushState to reel/explore:', url);
+                    return;
                 }
                 var res = originalPushState.apply(this, arguments);
                 setTimeout(updateStyles, 50);
@@ -113,8 +193,8 @@ class MainActivity : AppCompatActivity() {
             const originalReplaceState = history.replaceState;
             history.replaceState = function(state, title, url) {
                 if (isBlocked(url)) {
-                    console.warn('[MiniGram] Blocked replaceState to:', url);
-                    return originalReplaceState.apply(this, [state, title, '/']);
+                    console.warn('[MiniGram] Blocked replaceState to reel/explore:', url);
+                    return;
                 }
                 var res = originalReplaceState.apply(this, arguments);
                 setTimeout(updateStyles, 50);
@@ -124,6 +204,17 @@ class MainActivity : AppCompatActivity() {
             window.addEventListener('popstate', function() {
                 setTimeout(updateStyles, 50);
             });
+
+            // Watchdog: If the browser URL somehow lands on a reel outside stories, redirect back to chat
+            setInterval(function() {
+                if (!isStories()) {
+                    var path = window.location.pathname.toLowerCase();
+                    if (path.includes('/reel/') || path.includes('/reels/')) {
+                        console.warn('[MiniGram] Reel URL detected in watchdog, redirecting to /direct/inbox/');
+                        window.location.replace('/direct/inbox/');
+                    }
+                }
+            }, 500);
         })();
     """.trimIndent()
 
@@ -171,8 +262,16 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
+        WebView.setWebContentsDebuggingEnabled(true)
         webView.setBackgroundColor(Color.BLACK)
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
+                android.util.Log.d("MiniGramConsole", "${message?.messageLevel()}: ${message?.message()} [${message?.sourceId()}:${message?.lineNumber()}]")
+                return true
+            }
+        }
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -222,8 +321,8 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
 
-                if (path == "/reels" || path == "/reels/" || path.contains("/explore")) {
-                    view?.loadUrl("https://www.instagram.com/")
+                // Total Reels & Explore Block: If any link tries to go to Reels or Explore, cancel it!
+                if (path.contains("/reel") || path.contains("/explore")) {
                     return true
                 }
 
@@ -244,6 +343,18 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 injectFilter(view)
                 swipeRefreshLayout.isRefreshing = false
+                view?.evaluateJavascript("""
+                    (function() {
+                        function getElInfo(sel) {
+                            var el = document.querySelector(sel);
+                            if (!el) return sel + ': null';
+                            var r = el.getBoundingClientRect();
+                            var cs = window.getComputedStyle(el);
+                            return sel + ': rect=(' + Math.round(r.x) + ',' + Math.round(r.y) + ',' + Math.round(r.width) + ',' + Math.round(r.height) + ') disp=' + cs.display + ' vis=' + cs.visibility + ' op=' + cs.opacity;
+                        }
+                        console.log('[MiniGramDebug] ' + getElInfo('header') + ' | ' + getElInfo('nav') + ' | ' + getElInfo('div[role="tablist"]') + ' | ' + getElInfo('svg[aria-label="Instagram"]') + ' | ' + getElInfo('article'));
+                    })();
+                """.trimIndent(), null)
             }
 
             private fun injectFilter(view: WebView?) {
