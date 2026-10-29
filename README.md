@@ -1,60 +1,64 @@
-# MiniGram 📸✨
+# MiniGram
 
-A distraction-free, mindful Instagram wrapper for iOS built with **SwiftUI** and **WebKit**.
+A lightweight, distraction-free Instagram client for iOS.
 
-## 🎯 Features (Option B)
-- ✅ **Stories Carousel**: Full access to your friends' active Stories at the top.
-- ✅ **Direct Messages (DMs)**: Message friends without distraction.
-- ✅ **Profile & Notifications**: Full access to your account and notifications.
-- 🚫 **Home Feed Posts**: Blocked and hidden completely. No infinite scrolling.
-- 🚫 **Reels Section**: Blocked both in the navigation bar and via internal client-side navigation.
-- 🚫 **Explore / Discover Tab**: Blocked to prevent rabbit holes.
-- 🔄 **Pull-to-Refresh**: Native pull down to refresh Stories and DMs.
-- 🔒 **Zero Credential Risk**: Uses native iOS WebKit cookie store; your login credentials never touch app code.
+MiniGram wraps Instagram Web in a native SwiftUI `WKWebView` container, stripping out algorithmic retention loops (the infinite Home Feed, Reels, and Explore) while preserving direct communication (DMs, Stories, Profile, and Notifications).
 
 ---
 
-## 🚀 How to Build & Install on iPhone 15 from Windows
+## Why MiniGram?
 
-Because this project uses GitHub Actions with a macOS runner, **you do not need a Mac**.
+When people delete the native Instagram app to reduce screen time, muscle memory often leads them to `instagram.com` on mobile Safari. Over time, Meta has updated its mobile web interface to mirror the native app, complete with infinite feed pagination, algorithmic suggested posts, and the Reels tab.
 
-### Step 1: Push this code to a new GitHub repository
-Run the following in PowerShell inside `D:\programs\breakit`:
-```powershell
-git branch -M main
-git add .
-git commit -m "Initial commit for MiniGram"
+MiniGram eliminates the compulsive feed loop while keeping the utility:
+- **Stories**: Kept intact at the top of the interface.
+- **Direct Messages**: Fully functional with real-time conversations.
+- **Home Feed**: Blocked. The infinite post feed below stories is removed.
+- **Reels & Explore**: Blocked both in the navigation bar and at the routing layer.
+- **Zero Credential Risk**: Uses Apple's native `WKWebsiteDataStore`. The app never accesses, logs, or stores your login credentials; authentication is handled directly by Instagram's official login system.
+
+---
+
+## Technical Architecture
+
+- **Pre-Paint CSS Injection**: Style overrides are injected at `WKUserScriptInjectionTime.atDocumentStart`, preventing any brief "flash of feed" before content hides.
+- **Timeline Query Interception**: When feed posts are removed from the DOM, Instagram's infinite scroll listener normally triggers endless network calls to fetch more posts. MiniGram intercepts timeline GraphQL and timeline API calls at the `fetch` level, eliminating CPU thrashing, overheating, and UI lag.
+- **Single Page App (SPA) Guard**: Monkey-patches HTML5 `history.pushState` and `history.replaceState` in addition to native `WKNavigationDelegate` handlers, ensuring internal client-side transitions cannot navigate to Reels or Explore.
+- **Safe Area Insets**: Positioned natively below the iOS Dynamic Island and notch, keeping headers, back buttons, and chat navigation responsive to touch.
+- **No-Mac CI/CD Build Pipeline**: The repository includes a GitHub Actions workflow that compiles the SwiftUI project on a macOS runner via `XcodeGen` and `xcodebuild`, outputting an unsigned `.ipa` for sideloading from Windows or Linux.
+
+---
+
+## Installation
+
+### Method 1: Sideload via Windows / Mac (Recommended)
+
+1. **Download the IPA**:
+   - Go to the [Actions](https://github.com/sarthaksec/MiniGram/actions) tab in this repository.
+   - Click the latest successful build.
+   - Download `MiniGram-iOS.zip` under **Artifacts** and unzip to get `MiniGram.ipa`.
+
+2. **Install using Sideloadly**:
+   - Download [Sideloadly](https://sideloadly.io/) (Windows/macOS).
+   - Connect your iPhone via USB.
+   - Drag `MiniGram.ipa` into Sideloadly, enter your Apple ID, and click **Start**.
+
+3. **Trust Developer Certificate**:
+   - On your iPhone: Go to **Settings > General > VPN & Device Management**.
+   - Tap your Apple ID under *Developer App* and select **Trust**.
+   - On iOS 17+: Enable **Settings > Privacy & Security > Developer Mode** (requires a device restart).
+
+### Method 2: Build locally in Xcode (macOS)
+
+```bash
+brew install xcodegen
+xcodegen generate
+open MiniGram.xcodeproj
 ```
-Create an empty private (or public) repository on GitHub named `MiniGram`, then connect and push:
-```powershell
-git remote add origin https://github.com/<YOUR_USERNAME>/MiniGram.git
-git push -u origin main
-```
-
-### Step 2: Download the built `.ipa` from GitHub Actions
-1. Go to your GitHub repository in your browser.
-2. Click the **Actions** tab at the top.
-3. You will see the **Build MiniGram iOS App** workflow running on macOS.
-4. When it turns green (approx. 2-3 minutes), click on the run.
-5. Under **Artifacts** at the bottom, download **`MiniGram-iOS.zip`**.
-6. Unzip it to get **`MiniGram.ipa`**.
+Select your Development Team, connect your iPhone, and hit **Cmd + R**.
 
 ---
 
-### Step 3: Install onto iPhone 15 using Sideloadly (Windows)
-1. Download and install **[Sideloadly](https://sideloadly.io/)** (free, trusted Windows iOS sideloading tool).
-2. Connect your **iPhone 15** to your Windows PC using your USB-C cable (tap "Trust this Computer" on your iPhone if prompted).
-3. Open **Sideloadly**:
-   - Drag and drop `MiniGram.ipa` into the large icon box on the left.
-   - Enter your **Apple ID email** in the Apple ID box.
-   - Click **Start** (it will prompt for your Apple ID password to sign the app with your free personal developer certificate).
-4. Sideloadly will sign and install **MiniGram** directly onto your iPhone 15!
+## License
 
----
-
-### Step 4: First-time iOS Trust & Developer Mode
-On your iPhone 15:
-1. Go to **Settings > General > VPN & Device Management**.
-2. Tap your Apple ID under "Developer App" and tap **Trust**.
-3. If on iOS 17: Go to **Settings > Privacy & Security > Developer Mode** and turn it **ON** (your phone will prompt a quick restart).
-4. Launch **MiniGram** from your Home Screen! Log into Instagram once, and you are set.
+MIT
