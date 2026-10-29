@@ -8,36 +8,14 @@ struct InstagramWebView: UIViewRepresentable {
 
         let script = """
         (function() {
-            // 1. Force modern viewport-fit=cover so env(safe-area-inset-*) works
-            function setupViewport() {
-                var meta = document.querySelector('meta[name="viewport"]');
-                if (!meta) {
-                    meta = document.createElement('meta');
-                    meta.name = 'viewport';
-                    (document.head || document.documentElement).appendChild(meta);
-                }
-                meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
-            }
-            setupViewport();
-
-            // 2. State Helpers
+            // Helper: Check if logged in
             function isLoggedIn() {
                 return document.cookie.includes('ds_user_id') ||
                        document.querySelector('a[href*="/direct/inbox/"]') !== null ||
                        document.querySelector('div[role="tablist"]') !== null;
             }
 
-            function isSpecificReel() {
-                // Matches /reel/CODE/ or /reels/CODE/ or /p/CODE/ (shared via DM)
-                return /^\\/(reel|reels|p)\\/[A-Za-z0-9_-]+\\/?/i.test(window.location.pathname);
-            }
-
-            function isAlgorithmicReels() {
-                var p = window.location.pathname.toLowerCase();
-                return p === '/reels' || p === '/reels/';
-            }
-
-            // 3. Intercept timeline feed queries to eliminate lag & CPU thrashing
+            // 1. Intercept timeline feed network calls to eliminate infinite-scroll lag
             const originalFetch = window.fetch;
             window.fetch = async function(...args) {
                 const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
@@ -53,123 +31,28 @@ struct InstagramWebView: UIViewRepresentable {
                 return originalFetch.apply(this, args);
             };
 
-            // 4. Inject Dedicated Back Button for Single Shared Reels
-            function ensureReelBackButton() {
-                if (isSpecificReel()) {
-                    var existingBtn = document.getElementById('minigram-reel-back');
-                    if (!existingBtn) {
-                        var btn = document.createElement('button');
-                        btn.id = 'minigram-reel-back';
-                        btn.innerHTML = '‹ Back to Chat';
-                        btn.onclick = function() {
-                            window.history.back();
-                        };
-                        document.body.appendChild(btn);
-                    }
-                } else {
-                    var btn = document.getElementById('minigram-reel-back');
-                    if (btn) btn.remove();
-                }
-            }
-
-            // 5. Dynamic CSS Management
+            // 2. Simple, clean styling
             function updateStyles() {
                 var loggedIn = isLoggedIn();
-                var onSingleReel = isSpecificReel();
 
-                // Core Layout & Notch/Dynamic Island Styling
-                var layoutStyle = document.getElementById('minigram-layout-style');
-                if (!layoutStyle) {
-                    layoutStyle = document.createElement('style');
-                    layoutStyle.id = 'minigram-layout-style';
-                    layoutStyle.type = 'text/css';
-                    layoutStyle.innerHTML = `
+                // Base Dark Theme (Below the notch, natural layout)
+                var baseStyle = document.getElementById('minigram-base-style');
+                if (!baseStyle) {
+                    baseStyle = document.createElement('style');
+                    baseStyle.id = 'minigram-base-style';
+                    baseStyle.type = 'text/css';
+                    baseStyle.innerHTML = `
                         html, body {
                             background-color: #000000 !important;
                             color: #FFFFFF !important;
                             overflow-x: hidden !important;
                             -webkit-tap-highlight-color: transparent;
                         }
-
-                        /* Safe Area padding so content never gets stuck behind Dynamic Island */
-                        body {
-                            padding-top: max(env(safe-area-inset-top), 50px) !important;
-                            padding-bottom: max(env(safe-area-inset-bottom), 20px) !important;
-                            box-sizing: border-box !important;
-                        }
-
-                        /* DM / Header Navigation Clearance & High-Touch Hit Area */
-                        header, 
-                        div[role="banner"],
-                        div[aria-label="Direct message thread"] > div:first-child {
-                            padding-top: max(env(safe-area-inset-top), 44px) !important;
-                            background-color: rgba(0, 0, 0, 0.95) !important;
-                        }
-
-                        /* Make Back Arrow in DMs prominent, padded, and easily tappable */
-                        svg[aria-label*="Back"], 
-                        svg[aria-label*="Chevron left"],
-                        a[href*="/direct/"]:has(svg),
-                        button:has(svg[aria-label*="Back"]) {
-                            padding: 10px !important;
-                            margin-top: 4px !important;
-                            min-width: 44px !important;
-                            min-height: 44px !important;
-                            touch-action: manipulation !important;
-                            cursor: pointer !important;
-                        }
-
-                        /* Single Reel Dedicated Floating Back Button */
-                        #minigram-reel-back {
-                            position: fixed !important;
-                            top: max(env(safe-area-inset-top), 52px) !important;
-                            left: 16px !important;
-                            z-index: 9999999 !important;
-                            background: rgba(20, 20, 20, 0.85) !important;
-                            -webkit-backdrop-filter: blur(16px) !important;
-                            backdrop-filter: blur(16px) !important;
-                            color: #ffffff !important;
-                            border: 1px solid rgba(255, 255, 255, 0.25) !important;
-                            border-radius: 20px !important;
-                            padding: 8px 16px !important;
-                            font-size: 14px !important;
-                            font-weight: 600 !important;
-                            display: flex !important;
-                            align-items: center !important;
-                            box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
-                            cursor: pointer !important;
-                        }
                     `;
-                    (document.head || document.documentElement).appendChild(layoutStyle);
+                    (document.head || document.documentElement).appendChild(baseStyle);
                 }
 
-                // Dedicated Single Reel App-Like View (No infinite scroll to next reel)
-                var reelSingleStyle = document.getElementById('minigram-single-reel-style');
-                if (onSingleReel) {
-                    if (!reelSingleStyle) {
-                        reelSingleStyle = document.createElement('style');
-                        reelSingleStyle.id = 'minigram-single-reel-style';
-                        reelSingleStyle.type = 'text/css';
-                        reelSingleStyle.innerHTML = `
-                            /* Lock vertical scroll so you can't doomscroll to next reel */
-                            body, html {
-                                overflow-y: hidden !important;
-                                touch-action: pan-x !important;
-                            }
-                            /* Hide bottom nav bar on reel player for immersive view */
-                            div[role="tablist"], nav[role="navigation"]:last-of-type {
-                                display: none !important;
-                            }
-                        `;
-                        (document.head || document.documentElement).appendChild(reelSingleStyle);
-                    }
-                } else {
-                    if (reelSingleStyle) reelSingleStyle.remove();
-                }
-
-                ensureReelBackButton();
-
-                // Blocker Filter (When logged in and NOT on a single reel)
+                // Blocker Filter: Only active when logged in
                 var filterStyle = document.getElementById('minigram-filter-style');
                 if (!loggedIn) {
                     if (filterStyle) filterStyle.remove();
@@ -216,11 +99,10 @@ struct InstagramWebView: UIViewRepresentable {
                 }
             }
 
-            // Run immediately
             updateStyles();
             document.addEventListener('DOMContentLoaded', updateStyles);
 
-            // 6. Debounced Mutation Observer to prevent DM typing / scrolling lag
+            // Debounced observer to prevent typing / scrolling lag in DMs
             let debounceTimer = null;
             const observer = new MutationObserver(function() {
                 if (debounceTimer) return;
@@ -231,30 +113,31 @@ struct InstagramWebView: UIViewRepresentable {
             });
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            // 7. Route Navigation Guard
+            // 3. Hard Client-Side Route Blocker
+            const blockedPaths = ['/reels', '/explore'];
+            function checkBlocked(path) {
+                if (!isLoggedIn() || !path) return false;
+                const lower = String(path).toLowerCase();
+                return blockedPaths.some(bp => lower.includes(bp));
+            }
+
             const originalPushState = history.pushState;
             history.pushState = function(state, title, url) {
-                if (isLoggedIn() && isAlgorithmicReels()) {
-                    console.warn('[MiniGram] Blocked pushState to algorithmic Reels');
+                if (checkBlocked(url)) {
+                    console.warn('[MiniGram] Blocked pushState to:', url);
                     return originalPushState.apply(this, [state, title, '/']);
                 }
-                setTimeout(updateStyles, 50);
                 return originalPushState.apply(this, arguments);
             };
 
             const originalReplaceState = history.replaceState;
             history.replaceState = function(state, title, url) {
-                if (isLoggedIn() && isAlgorithmicReels()) {
-                    console.warn('[MiniGram] Blocked replaceState to algorithmic Reels');
+                if (checkBlocked(url)) {
+                    console.warn('[MiniGram] Blocked replaceState to:', url);
                     return originalReplaceState.apply(this, [state, title, '/']);
                 }
-                setTimeout(updateStyles, 50);
                 return originalReplaceState.apply(this, arguments);
             };
-
-            window.addEventListener('popstate', function() {
-                setTimeout(updateStyles, 50);
-            });
         })();
         """
 
@@ -275,7 +158,6 @@ struct InstagramWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
 
         let refreshControl = UIRefreshControl()
         refreshControl.tintColor = .white
@@ -318,12 +200,8 @@ struct InstagramWebView: UIViewRepresentable {
 
             let path = url.path.lowercased()
 
-            // Allow single Reel / Post links shared in DMs (e.g., /reel/C7xY9z/ or /p/C7xY9z/)
-            let isSingleMedia = path.hasPrefix("/reel/") || path.hasPrefix("/p/") || (path.hasPrefix("/reels/") && path.count > 8)
-
-            // Only block the generic algorithmic Reels tab (/reels or /reels/) and Explore
-            if (!isSingleMedia && (path == "/reels" || path == "/reels/")) || path.contains("/explore") {
-                print("[MiniGram] Blocked navigation attempt to: \(url.absoluteString)")
+            // Block Reels & Explore
+            if path.contains("/reels") || path.contains("/explore") {
                 decisionHandler(.cancel)
                 if let homeURL = URL(string: "https://www.instagram.com/") {
                     webView.load(URLRequest(url: homeURL))

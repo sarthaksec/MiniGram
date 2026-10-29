@@ -14,7 +14,7 @@ struct MiniGramApp: App {
 struct ContentView: View {
     var body: some View {
         InstagramWebView()
-            // Fluid edge-to-edge for modern OLED screens (iPhone 14 Pro, 15, 15 Pro, 16 series)
-            .ignoresSafeArea()
+            // Top stays safely below the notch/Dynamic Island, bottom extends to edge
+            .edgesIgnoringSafeArea(.bottom)
     }
 }
