@@ -6,62 +6,101 @@ struct InstagramWebView: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         let contentController = WKUserContentController()
 
-        // 1. INJECTED CSS: Hides feed posts, reels tab, and explore tab
-        let cssRules = """
-        /* Hide all feed posts (Photos, Videos, Carousels) */
-        article {
-            display: none !important;
-        }
-
-        /* Hide the Reels navigation icon & links */
-        a[href*="/reels/"], 
-        a[aria-label*="Reels"], 
-        svg[aria-label*="Reels"],
-        div[role="tablist"] a[href*="/reels"] {
-            display: none !important;
-        }
-
-        /* Hide the Explore / Search navigation icon & links */
-        a[href*="/explore/"], 
-        a[aria-label*="Search and explore"], 
-        svg[aria-label*="Search and explore"],
-        div[role="tablist"] a[href*="/explore"] {
-            display: none !important;
-        }
-
-        /* Hide infinite scroll loading spinners */
-        div[data-visualcompletion="loading-state"] {
-            display: none !important;
-        }
-
-        /* Hide suggested accounts / follow banners below stories */
-        main section > div > div > div:has(a[href*="/explore/people/"]) {
-            display: none !important;
-        }
-        """
-
-        let styleInjectionScript = """
+        // Comprehensive script to fix:
+        // 1. Never break Login/Auth pages
+        // 2. Prevent infinite scroll CPU thrashing
+        // 3. Cleanly hide Feed, Reels, Explore while keeping Stories & DMs intact
+        let injectedScript = """
         (function() {
-            function injectCSS() {
-                var style = document.getElementById('minigram-injected-styles');
-                if (!style) {
-                    style = document.createElement('style');
-                    style.id = 'minigram-injected-styles';
+            // Helper: Check if currently on an authentication/login page
+            function isAuthPage() {
+                var p = window.location.pathname;
+                return p.includes('/accounts/login') ||
+                       p.includes('/accounts/emailsignup') ||
+                       p.includes('/accounts/onetap') ||
+                       document.querySelector('form#loginForm') !== null ||
+                       document.querySelector('input[name="username"]') !== null;
+            }
+
+            // 1. Intercept network fetch for timeline feed to prevent infinite scroll freeze
+            const originalFetch = window.fetch;
+            window.fetch = async function(...args) {
+                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+                // Block timeline feed network calls so Instagram stops looping
+                if (url.includes('/api/v1/feed/timeline/') || url.includes('PolarisFeedQuery')) {
+                    return new Response(JSON.stringify({
+                        data: { xdt_api__v1__feed__timeline: { edges: [] } },
+                        status: 'ok'
+                    }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                return originalFetch.apply(this, args);
+            };
+
+            // 2. Inject CSS rules carefully
+            function applyStyles() {
+                var existing = document.getElementById('minigram-styles');
+                
+                // If on login/auth page, NEVER hide elements
+                if (isAuthPage()) {
+                    if (existing) existing.remove();
+                    return;
+                }
+
+                if (!existing) {
+                    var style = document.createElement('style');
+                    style.id = 'minigram-styles';
                     style.type = 'text/css';
-                    style.innerHTML = `\(cssRules)`;
+                    style.innerHTML = `
+                        /* Hide post feed articles only on main content */
+                        main article {
+                            display: none !important;
+                        }
+
+                        /* Hide Reels navigation tab & icons */
+                        a[href*="/reels/"], 
+                        a[aria-label*="Reels"], 
+                        svg[aria-label*="Reels"],
+                        div[role="tablist"] a[href*="/reels"] {
+                            display: none !important;
+                        }
+
+                        /* Hide Explore / Search navigation tab & icons */
+                        a[href*="/explore/"], 
+                        a[aria-label*="Search and explore"], 
+                        svg[aria-label*="Search and explore"],
+                        div[role="tablist"] a[href*="/explore"] {
+                            display: none !important;
+                        }
+
+                        /* Hide Suggested accounts carousel under stories */
+                        main section > div:not([role="menu"]) > div > div:has(a[href*="/explore/people/"]) {
+                            display: none !important;
+                        }
+
+                        /* Hide loading spinners at bottom */
+                        div[data-visualcompletion="loading-state"] {
+                            display: none !important;
+                        }
+                    `;
                     (document.head || document.documentElement).appendChild(style);
                 }
             }
 
-            // Inject immediately
-            injectCSS();
+            // Run immediately
+            applyStyles();
 
-            // Re-check after DOM is loaded to ensure style permanence
-            document.addEventListener('DOMContentLoaded', injectCSS);
+            // Observe page changes (Instagram is a SPA)
+            const observer = new MutationObserver(function() {
+                applyStyles();
+            });
+            observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            // 2. SPA ROUTE INTERCEPTION: Monkey-patch history pushState / replaceState
+            // 3. SPA Route Navigation Blocker
             const blockedPaths = ['/reels', '/explore'];
-            function isPathBlocked(path) {
+            function checkBlocked(path) {
                 if (!path) return false;
                 const lower = String(path).toLowerCase();
                 return blockedPaths.some(bp => lower.includes(bp));
@@ -69,8 +108,8 @@ struct InstagramWebView: UIViewRepresentable {
 
             const originalPushState = history.pushState;
             history.pushState = function(state, title, url) {
-                if (isPathBlocked(url)) {
-                    console.warn('[MiniGram] Blocked client navigation to:', url);
+                if (checkBlocked(url)) {
+                    console.warn('[MiniGram] Blocked pushState to:', url);
                     return originalPushState.apply(this, [state, title, '/']);
                 }
                 return originalPushState.apply(this, arguments);
@@ -78,8 +117,8 @@ struct InstagramWebView: UIViewRepresentable {
 
             const originalReplaceState = history.replaceState;
             history.replaceState = function(state, title, url) {
-                if (isPathBlocked(url)) {
-                    console.warn('[MiniGram] Blocked client navigation to:', url);
+                if (checkBlocked(url)) {
+                    console.warn('[MiniGram] Blocked replaceState to:', url);
                     return originalReplaceState.apply(this, [state, title, '/']);
                 }
                 return originalReplaceState.apply(this, arguments);
@@ -88,31 +127,32 @@ struct InstagramWebView: UIViewRepresentable {
         """
 
         let userScript = WKUserScript(
-            source: styleInjectionScript,
-            injectionTime: .atDocumentStart, // Injects before DOM renders (No flash of feed!)
+            source: injectedScript,
+            injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         )
         contentController.addUserScript(userScript)
 
         configuration.userContentController = contentController
-        // Persistent cookie store so login state is saved
         configuration.websiteDataStore = WKWebsiteDataStore.default()
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.bounces = true
-        
-        // Native pull-to-refresh
+        webView.isOpaque = false
+        webView.backgroundColor = .black
+        webView.scrollView.backgroundColor = .black
+
+        // Pull to refresh
         let refreshControl = UIRefreshControl()
+        refreshControl.tintColor = .white
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
         context.coordinator.webView = webView
 
-        // Load root Instagram (displays Stories carousel cleanly at the top)
         if let url = URL(string: "https://www.instagram.com/") {
-            let request = URLRequest(url: url)
-            webView.load(request)
+            webView.load(URLRequest(url: url))
         }
 
         return webView
@@ -134,7 +174,6 @@ struct InstagramWebView: UIViewRepresentable {
             }
         }
 
-        // 3. HARD NAVIGATION GUARD: Intercepts standard link clicks and network requests
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
@@ -147,9 +186,9 @@ struct InstagramWebView: UIViewRepresentable {
 
             let path = url.path.lowercased()
 
-            // If any navigation targets Reels or Explore, cancel and bounce back home
+            // Hard barrier against Reels and Explore routes
             if path.contains("/reels") || path.contains("/explore") {
-                print("[MiniGram] Blocked navigation attempt to: \(url.absoluteString)")
+                print("[MiniGram] Blocked link navigation to: \(url.absoluteString)")
                 decisionHandler(.cancel)
                 if let homeURL = URL(string: "https://www.instagram.com/") {
                     webView.load(URLRequest(url: homeURL))

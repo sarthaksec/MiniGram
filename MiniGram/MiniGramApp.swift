@@ -5,7 +5,7 @@ struct MiniGramApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .preferredColorScheme(.dark) // Instagram dark mode default
+                .preferredColorScheme(.dark)
         }
     }
 }
@@ -13,6 +13,7 @@ struct MiniGramApp: App {
 struct ContentView: View {
     var body: some View {
         InstagramWebView()
-            .ignoresSafeArea()
+            // Protect the top notch/Dynamic Island, extend bottom to screen edge
+            .edgesIgnoringSafeArea(.bottom)
     }
 }
