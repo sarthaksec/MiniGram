@@ -23,35 +23,41 @@ class MainActivity : AppCompatActivity() {
 
     private val injectionScript = """
         (function() {
+            // Strictly check for login/signup forms
             function isAuthPage() {
-                var p = window.location.pathname;
+                var p = window.location.pathname.toLowerCase();
                 return p.includes('/accounts/login') ||
                        p.includes('/accounts/emailsignup') ||
-                       p.includes('/accounts/onetap') ||
                        document.querySelector('form#loginForm') !== null ||
-                       document.querySelector('input[name="username"]') !== null;
-            }
-
-            function isLoggedIn() {
-                return document.cookie.includes('ds_user_id') && !isAuthPage();
+                       document.querySelector('input[name="username"]') !== null ||
+                       document.querySelector('input[name="password"]') !== null;
             }
 
             function isReelView() {
-                var isReelUrl = /^\\/(reel|reels|p)\\/[A-Za-z0-9_-]+/i.test(window.location.pathname);
+                var p = window.location.pathname.toLowerCase();
+                var isReelUrl = p.startsWith('/reel/') || p.startsWith('/reels/') || p.startsWith('/p/');
                 var hasVideoModal = document.querySelector('div[role="dialog"] video') !== null;
-                var hasFeedVideo = document.querySelector('video') !== null && window.location.pathname.includes('/direct/');
+                var hasFeedVideo = document.querySelector('video') !== null && p.includes('/direct/');
                 return isReelUrl || hasVideoModal || hasFeedVideo;
             }
 
             function updateStyles() {
+                if (isAuthPage()) {
+                    var filter = document.getElementById('minigram-filter-style');
+                    if (filter) filter.remove();
+                    var reelLock = document.getElementById('minigram-reel-lock-style');
+                    if (reelLock) reelLock.remove();
+                    return;
+                }
+
                 var onReel = isReelView();
 
-                // Notify Native Android layer to intercept touch gestures
+                // Report reel state to Native Kotlin
                 if (window.MiniGramNative && typeof window.MiniGramNative.setReelActive === 'function') {
                     window.MiniGramNative.setReelActive(onReel);
                 }
 
-                // 1. Reel Lockdown CSS: Deletes all subsequent reels from DOM & locks scroll
+                // 1. Reel Lockdown: Freeze scroll & hide subsequent videos
                 var reelLockStyle = document.getElementById('minigram-reel-lock-style');
                 if (onReel) {
                     if (!reelLockStyle) {
@@ -59,26 +65,20 @@ class MainActivity : AppCompatActivity() {
                         reelLockStyle.id = 'minigram-reel-lock-style';
                         reelLockStyle.type = 'text/css';
                         reelLockStyle.innerHTML = `
-                            /* Completely freeze vertical scroll */
                             html, body, main, div[id^="mount"], div[role="dialog"] {
                                 overflow-y: hidden !important;
                                 touch-action: pan-x !important;
                             }
-
-                            /* Disable snap scroll containers */
                             div[style*="scroll-snap"], div[style*="overflow-y"] {
                                 scroll-snap-type: none !important;
                                 overflow-y: hidden !important;
                             }
-
-                            /* DELETE all subsequent algorithmic reels from the DOM */
+                            /* Delete all subsequent algorithmic reels from the DOM */
                             div[style*="scroll-snap"] > div:nth-child(n+2),
                             div[role="dialog"] > div > div:nth-child(n+2),
                             main section > div > div:nth-child(n+2):has(video) {
                                 display: none !important;
                             }
-
-                            /* Floating Back Button for clean return to DMs */
                             #minigram-reel-back {
                                 position: fixed !important;
                                 top: 16px !important;
@@ -115,32 +115,40 @@ class MainActivity : AppCompatActivity() {
                     if (backBtn) backBtn.remove();
                 }
 
-                // 2. Feed Blocker (Active when logged in)
+                // 2. Feed Blocker: Hides Home Posts, Reels Icon, Explore Icon
                 var filterStyle = document.getElementById('minigram-filter-style');
-                if (!isLoggedIn()) {
-                    if (filterStyle) filterStyle.remove();
-                    return;
-                }
-
                 if (!filterStyle) {
                     filterStyle = document.createElement('style');
                     filterStyle.id = 'minigram-filter-style';
                     filterStyle.type = 'text/css';
                     filterStyle.innerHTML = `
-                        main article {
+                        /* Completely hide feed post cards */
+                        article, main article {
                             display: none !important;
                         }
-                        a[href*="/reels/"], a[aria-label*="Reels"], svg[aria-label*="Reels"],
+
+                        /* Completely hide Reels tab in bottom bar */
+                        a[href*="/reels/"], 
+                        a[aria-label*="Reels"], 
+                        svg[aria-label*="Reels"],
                         div[role="tablist"] a[href*="/reels"] {
                             display: none !important;
                         }
-                        a[href*="/explore/"], a[aria-label*="Search and explore"], svg[aria-label*="Search and explore"],
+
+                        /* Completely hide Explore tab in bottom bar */
+                        a[href*="/explore/"], 
+                        a[aria-label*="Search and explore"], 
+                        svg[aria-label*="Search and explore"],
                         div[role="tablist"] a[href*="/explore"] {
                             display: none !important;
                         }
+
+                        /* Hide suggested accounts banners */
                         main section > div:not([role="menu"]) > div > div:has(a[href*="/explore/people/"]) {
                             display: none !important;
                         }
+
+                        /* Hide loading spinners */
                         div[data-visualcompletion="loading-state"] {
                             display: none !important;
                         }
@@ -149,6 +157,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            // Execute immediately and on DOM changes
             updateStyles();
             document.addEventListener('DOMContentLoaded', updateStyles);
 
@@ -165,9 +174,9 @@ class MainActivity : AppCompatActivity() {
             // 3. SPA Route Interception
             const originalPushState = history.pushState;
             history.pushState = function(state, title, url) {
-                var targetUrl = String(url || '');
+                var targetUrl = String(url || '').toLowerCase();
 
-                if (isLoggedIn() && (targetUrl === '/reels' || targetUrl === '/reels/' || targetUrl.includes('/explore'))) {
+                if (targetUrl === '/reels' || targetUrl === '/reels/' || targetUrl.includes('/explore')) {
                     return originalPushState.apply(this, [state, title, '/']);
                 }
 
@@ -178,9 +187,9 @@ class MainActivity : AppCompatActivity() {
 
             const originalReplaceState = history.replaceState;
             history.replaceState = function(state, title, url) {
-                var targetUrl = String(url || '');
+                var targetUrl = String(url || '').toLowerCase();
 
-                if (isLoggedIn() && (targetUrl === '/reels' || targetUrl === '/reels/' || targetUrl.includes('/explore'))) {
+                if (targetUrl === '/reels' || targetUrl === '/reels/' || targetUrl.includes('/explore')) {
                     return originalReplaceState.apply(this, [state, title, '/']);
                 }
 
@@ -199,6 +208,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        WebView.setWebContentsDebuggingEnabled(true)
 
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = Color.BLACK
@@ -260,7 +271,6 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
 
-        // Bridge JS to Native to report reel state
         webView.addJavascriptInterface(object {
             @JavascriptInterface
             fun setReelActive(active: Boolean) {
@@ -268,7 +278,6 @@ class MainActivity : AppCompatActivity() {
             }
         }, "MiniGramNative")
 
-        // NATIVE TOUCH INTERCEPTION: When a reel is active, drop vertical drag events at the OS level
         var touchStartY = 0f
         var touchStartX = 0f
 
@@ -284,9 +293,8 @@ class MainActivity : AppCompatActivity() {
                 MotionEvent.ACTION_MOVE -> {
                     val diffY = Math.abs(event.y - touchStartY)
                     val diffX = Math.abs(event.x - touchStartX)
-                    // If vertical drag on reel, consume and cancel it completely!
                     if (diffY > 12 && diffY > diffX) {
-                        true // Consumed natively! Chromium never sees the swipe!
+                        true // Drop vertical swipe on reel natively
                     } else {
                         false
                     }
