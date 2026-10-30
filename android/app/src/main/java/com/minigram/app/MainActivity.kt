@@ -336,6 +336,61 @@ class MainActivity : AppCompatActivity() {
                                 position: relative !important;
                                 overflow: hidden !important;
                             }
+
+                            /* =========================================================
+                               NATIVE MOBILE UI & OLED POLISH
+                               ========================================================= */
+                            /* 8. Global Zero-Latency Touch & Native Font Smoothing */
+                            *, *::before, *::after {
+                                -webkit-tap-highlight-color: transparent !important;
+                                touch-action: manipulation;
+                            }
+
+                            html, body, #mount_0_0_ {
+                                background-color: #000000 !important;
+                                color: #F5F5F7 !important;
+                                font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Roboto, system-ui, sans-serif !important;
+                                -webkit-font-smoothing: antialiased !important;
+                                -webkit-text-size-adjust: 100% !important;
+                            }
+
+                            /* 9. Hide Desktop Scrollbars while preserving momentum */
+                            ::-webkit-scrollbar {
+                                display: none !important;
+                                width: 0 !important;
+                                height: 0 !important;
+                            }
+
+                            /* 10. Frosted Glass Header with hairline border */
+                            header, nav[role="navigation"], div[role="banner"] {
+                                background: rgba(0, 0, 0, 0.72) !important;
+                                backdrop-filter: blur(20px) saturate(180%) !important;
+                                -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+                                border-bottom: 0.5px solid rgba(255, 255, 255, 0.12) !important;
+                            }
+
+                            /* 11. Frosted Glass Bottom Navigation Tab Bar */
+                            div[role="tablist"], footer nav {
+                                background: rgba(0, 0, 0, 0.8) !important;
+                                backdrop-filter: blur(25px) saturate(180%) !important;
+                                -webkit-backdrop-filter: blur(25px) saturate(180%) !important;
+                                border-top: 0.5px solid rgba(255, 255, 255, 0.1) !important;
+                            }
+
+                            /* 12. Hide Web Install App banners and promo popups */
+                            a[href*="/app/install/"],
+                            div[data-nosnippet],
+                            button:has(svg[aria-label*="App icon"]) {
+                                display: none !important;
+                            }
+
+                            /* 13. Subtle micro-interactions on interactive cards */
+                            div[role="row"] div[data-pressable-container="true"] {
+                                transition: transform 0.12s ease-out;
+                            }
+                            div[role="row"] div[data-pressable-container="true"]:active {
+                                transform: scale(0.985);
+                            }
                         `;
                         targetParent.appendChild(filterStyle);
                     }
@@ -382,6 +437,26 @@ class MainActivity : AppCompatActivity() {
                 }
                 attachObserver();
             }
+
+            // =========================================================================
+            // 4b. HAPTIC FEEDBACK BRIDGE: Tactile responses for interactive elements
+            // =========================================================================
+            function triggerHaptic() {
+                try {
+                    if (window.AndroidBridge && window.AndroidBridge.haptic) {
+                        window.AndroidBridge.haptic();
+                    } else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.haptic) {
+                        window.webkit.messageHandlers.haptic.postMessage('tap');
+                    }
+                } catch(e) {}
+            }
+
+            document.addEventListener('click', function(e) {
+                var btn = e.target.closest ? e.target.closest('button, a, div[role="button"], div[role="tab"], div[role="menuitem"]') : null;
+                if (btn) {
+                    triggerHaptic();
+                }
+            }, true);
 
             // =========================================================================
             // 5. CLIENT-SIDE ROUTING GUARDS
@@ -494,6 +569,15 @@ class MainActivity : AppCompatActivity() {
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         webView.isVerticalScrollBarEnabled = false
         webView.isHorizontalScrollBarEnabled = false
+
+        webView.addJavascriptInterface(object {
+            @android.webkit.JavascriptInterface
+            fun haptic() {
+                webView.post {
+                    webView.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                }
+            }
+        }, "AndroidBridge")
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
