@@ -91,6 +91,22 @@ MiniGram features a fully automated cross-platform continuous integration pipeli
 
 ---
 
+## Installation & Pre-built Binaries
+
+Pre-compiled production binaries are available directly on the [Releases](https://github.com/sarthaksec/MiniGram/releases/latest) page.
+
+### iOS (`MiniGram.ipa`)
+1. Download **[MiniGram.ipa](https://github.com/sarthaksec/MiniGram/releases/download/v1.0.0/MiniGram.ipa)**.
+2. Connect your iPhone via USB and launch [Sideloadly](https://sideloadly.io/) (or AltStore / TrollStore).
+3. Drag `MiniGram.ipa` into Sideloadly, provide your Apple ID for ad-hoc signing, and click **Start**.
+4. On your device, navigate to **Settings > General > VPN & Device Management** and trust the developer certificate. On iOS 17+, enable **Settings > Privacy & Security > Developer Mode**.
+
+### Android (`MiniGram.apk`)
+1. Download **[MiniGram.apk](https://github.com/sarthaksec/MiniGram/releases/download/v1.0.0/MiniGram.apk)**.
+2. Transfer to your device and tap to install (or run `adb install -r MiniGram.apk`).
+
+---
+
 ## Building Locally
 
 ### iOS
