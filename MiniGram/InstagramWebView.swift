@@ -66,9 +66,10 @@ struct InstagramWebView: UIViewRepresentable {
                             display: none !important;
                         }
 
-                        /* 6. In DMs: mute shared Reel links visually */
+                        /* 6. In DMs: mute shared Reel & Post links visually */
                         a[href*="/reel/"], 
-                        a[href*="/reels/"] {
+                        a[href*="/reels/"],
+                        a[href*="/p/"] {
                             opacity: 0.3 !important;
                             filter: grayscale(1) !important;
                             cursor: not-allowed !important;
@@ -83,8 +84,8 @@ struct InstagramWebView: UIViewRepresentable {
             function neutralizeReels() {
                 if (isStories()) return;
 
-                // Find all links to reels
-                var links = document.querySelectorAll('a[href*="/reel/"], a[href*="/reels/"]');
+                // Find all links to reels or posts
+                var links = document.querySelectorAll('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"]');
                 links.forEach(function(link) {
                     link.style.pointerEvents = 'none';
                     link.style.cursor = 'not-allowed';
@@ -102,11 +103,11 @@ struct InstagramWebView: UIViewRepresentable {
                     }
                 });
 
-                // Remove any reel modal dialogs mounted outside Stories
+                // Remove any reel/post modal dialogs mounted outside Stories
                 var dialogs = document.querySelectorAll('div[role="dialog"]');
                 dialogs.forEach(function(d) {
-                    if (d.querySelector('video') || d.querySelector('a[href*="/reel/"]')) {
-                        console.warn('[MiniGram] Removed Reel modal dialog');
+                    if (d.querySelector('video') || d.querySelector('a[href*="/reel/"]') || d.querySelector('a[href*="/p/"]')) {
+                        console.warn('[MiniGram] Removed Reel/Post modal dialog');
                         d.remove();
                     }
                 });
@@ -119,16 +120,16 @@ struct InstagramWebView: UIViewRepresentable {
                 });
             }
 
-            // Capture-phase click blocker: stops clicks on any reel element before React sees it
+            // Capture-phase click blocker: stops clicks on any reel/post element before React sees it
             function isReelClick(target) {
                 if (!target) return false;
-                if (target.closest && target.closest('a[href*="/reel/"], a[href*="/reels/"]')) return true;
+                if (target.closest && target.closest('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"]')) return true;
 
                 var curr = target;
                 for (var i = 0; i < 5 && curr && curr !== document.body && curr !== document.documentElement; i++) {
                     if (curr.getAttribute && curr.getAttribute('data-minigram-locked') === 'true') return true;
                     var aria = (curr.getAttribute && curr.getAttribute('aria-label')) || '';
-                    if (aria && aria.toLowerCase().includes('reel')) return true;
+                    if (aria && (aria.toLowerCase().includes('reel') || aria.toLowerCase().includes('post'))) return true;
                     if (curr.tagName === 'VIDEO') return true;
                     curr = curr.parentElement;
                 }
@@ -138,7 +139,7 @@ struct InstagramWebView: UIViewRepresentable {
             document.addEventListener('click', function(e) {
                 if (isStories()) return;
                 if (isReelClick(e.target)) {
-                    console.warn('[MiniGram] Captured and blocked click on DM Reel');
+                    console.warn('[MiniGram] Captured and blocked click on DM Reel/Post');
                     e.preventDefault();
                     e.stopPropagation();
                     e.stopImmediatePropagation();
@@ -159,17 +160,17 @@ struct InstagramWebView: UIViewRepresentable {
             });
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            // Client-Side Blocker for Reels & Explore pushState/replaceState
+            // Client-Side Blocker for Reels, Posts & Explore pushState/replaceState
             function isBlocked(url) {
                 if (!url) return false;
                 var target = String(url).toLowerCase();
-                return target.includes('/reel') || target.includes('/explore');
+                return target.includes('/reel') || target.includes('/explore') || target.includes('/p/');
             }
 
             const originalPushState = history.pushState;
             history.pushState = function(state, title, url) {
                 if (isBlocked(url)) {
-                    console.warn('[MiniGram] Blocked pushState to reel/explore:', url);
+                    console.warn('[MiniGram] Blocked pushState to reel/post/explore:', url);
                     return;
                 }
                 var res = originalPushState.apply(this, arguments);
@@ -180,7 +181,7 @@ struct InstagramWebView: UIViewRepresentable {
             const originalReplaceState = history.replaceState;
             history.replaceState = function(state, title, url) {
                 if (isBlocked(url)) {
-                    console.warn('[MiniGram] Blocked replaceState to reel/explore:', url);
+                    console.warn('[MiniGram] Blocked replaceState to reel/post/explore:', url);
                     return;
                 }
                 var res = originalReplaceState.apply(this, arguments);
@@ -192,12 +193,12 @@ struct InstagramWebView: UIViewRepresentable {
                 setTimeout(updateStyles, 50);
             });
 
-            // Watchdog: If the browser URL somehow lands on a reel outside stories, redirect back to chat
+            // Watchdog: If the browser URL somehow lands on a reel or post outside stories, redirect back to chat
             setInterval(function() {
                 if (!isStories()) {
                     var path = window.location.pathname.toLowerCase();
-                    if (path.includes('/reel/') || path.includes('/reels/')) {
-                        console.warn('[MiniGram] Reel URL detected in watchdog, redirecting to /direct/inbox/');
+                    if (path.includes('/reel/') || path.includes('/reels/') || path.includes('/p/')) {
+                        console.warn('[MiniGram] Reel/Post URL detected in watchdog, redirecting to /direct/inbox/');
                         window.location.replace('/direct/inbox/');
                     }
                 }
@@ -222,6 +223,16 @@ struct InstagramWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
+
+        #if DEBUG
+        if #available(iOS 16.4, *) {
+            webView.isInspectable = true
+        }
+        #else
+        if #available(iOS 16.4, *) {
+            webView.isInspectable = true
+        }
+        #endif
 
         let refreshControl = UIRefreshControl()
         refreshControl.tintColor = .white
@@ -264,7 +275,7 @@ struct InstagramWebView: UIViewRepresentable {
 
             let path = url.path.lowercased()
 
-            if path.contains("/reel") || path.contains("/explore") {
+            if path.contains("/reel") || path.contains("/explore") || path.contains("/p/") {
                 decisionHandler(.cancel)
                 return
             }
