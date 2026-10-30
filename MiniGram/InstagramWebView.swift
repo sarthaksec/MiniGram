@@ -58,23 +58,139 @@ struct InstagramWebView: UIViewRepresentable {
             };
 
             // =========================================================================
-            // 2. DOM SHIELDING: Physical Inert Click Sink with Scroll Preservation
+            // 1b. MEDIA INTERCEPTION: Definitively Block Video Playback & Loading in DMs
             // =========================================================================
+            const originalPlay = HTMLMediaElement.prototype.play;
+            HTMLMediaElement.prototype.play = function() {
+                if (this.tagName === 'VIDEO' && !isStories()) {
+                    this.pause();
+                    this.muted = true;
+                    return Promise.reject(new DOMException('Playback blocked by MiniGram', 'NotAllowedError')).catch(function() {});
+                }
+                return originalPlay.apply(this, arguments);
+            };
+
+            const originalLoad = HTMLMediaElement.prototype.load;
+            HTMLMediaElement.prototype.load = function() {
+                if (this.tagName === 'VIDEO' && !isStories()) {
+                    return;
+                }
+                return originalLoad.apply(this, arguments);
+            };
+
+            const originalSrcDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+            if (originalSrcDesc && originalSrcDesc.set) {
+                Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+                    get: function() {
+                        return originalSrcDesc.get.call(this);
+                    },
+                    set: function(val) {
+                        if (this.tagName === 'VIDEO' && !isStories() && (window.location.pathname.toLowerCase().includes('/direct') || this.closest('a[href*="/reel/"], a[href*="/p/"], [data-minigram-card="true"]'))) {
+                            return originalSrcDesc.set.call(this, '');
+                        }
+                        return originalSrcDesc.set.call(this, val);
+                    }
+                });
+            }
+
+            // =========================================================================
+            // 2. DOM SHIELDING: 100% Full-Card Inert Click Shield with Scroll Preservation
+            // =========================================================================
+            function findReelCard(link) {
+                if (!link) return null;
+
+                var article = link.closest('article');
+                if (article) {
+                    var bubble = article.closest('div[role="button"], div[tabindex="0"], div[data-pressable-container="true"]');
+                    return bubble || article;
+                }
+
+                var curr = link;
+                var candidate = link.parentElement;
+
+                while (curr && curr !== document.body && curr !== document.documentElement) {
+                    var role = (curr.getAttribute('role') || '').toLowerCase();
+                    if (role === 'row' || role === 'feed' || role === 'list' || role === 'main' || role === 'grid') {
+                        break;
+                    }
+
+                    var parent = curr.parentElement;
+                    if (!parent) break;
+
+                    var pRole = (parent.getAttribute('role') || '').toLowerCase();
+                    if (pRole === 'row' || pRole === 'feed' || pRole === 'list' || pRole === 'main') {
+                        candidate = curr;
+                        break;
+                    }
+
+                    // If parent contains reaction/action buttons as siblings of the message bubble
+                    if (parent.querySelector('div[aria-label*="React"], button[aria-label*="React"], svg[aria-label*="React"], div[aria-label*="reply"], button[aria-label*="reply"]')) {
+                        if (!curr.querySelector('div[aria-label*="React"], button[aria-label*="React"], svg[aria-label*="React"]')) {
+                            candidate = curr;
+                            break;
+                        }
+                    }
+
+                    var style = window.getComputedStyle(curr);
+                    var br = parseFloat(style.borderRadius) || 0;
+                    if (br >= 12 && curr.offsetHeight > 80) {
+                        candidate = curr;
+                    }
+
+                    curr = parent;
+                }
+
+                return candidate;
+            }
+
             function applyReelShields() {
                 if (isStories() || isAuthPage()) return;
 
                 const mediaLinks = document.querySelectorAll('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"]');
                 mediaLinks.forEach(function(link) {
-                    var card = link.closest('div[role="button"], div[tabindex="0"], div[data-pressable-container="true"]') || link.parentElement;
+                    var card = findReelCard(link);
+                    if (!card) card = link.closest('div[role="button"], div[tabindex="0"], div[data-pressable-container="true"]') || link.parentElement;
                     if (!card || card.dataset.minigramShielded === 'true') return;
 
                     card.dataset.minigramShielded = 'true';
-                    card.style.position = 'relative';
+                    card.dataset.minigramCard = 'true';
+                    card.classList.add('minigram-reel-card');
+
+                    var compPos = window.getComputedStyle(card).position;
+                    if (compPos === 'static' || !compPos) {
+                        card.style.position = 'relative';
+                    }
+
+                    // Neutralize all video elements inside this card without destructive DOM removal
+                    var videos = card.querySelectorAll('video');
+                    videos.forEach(function(v) {
+                        v.pause();
+                        v.muted = true;
+                        v.removeAttribute('autoplay');
+                        v.preload = 'none';
+                        v.removeAttribute('src');
+                        v.style.display = 'none';
+                    });
 
                     var shield = document.createElement('div');
                     shield.className = 'minigram-reel-shield';
-                    shield.style.cssText = 'position:absolute!important;inset:0!important;z-index:99!important;touch-action:pan-y!important;background:rgba(0,0,0,0.55)!important;border-radius:12px!important;display:flex!important;align-items:center!important;justify-content:center!important;cursor:not-allowed!important;backdrop-filter:blur(3px)!important;';
-                    shield.innerHTML = '<span style="background:rgba(20,20,20,0.92);color:#aaa;font-size:11px;font-weight:600;padding:5px 10px;border-radius:8px;pointer-events:none;border:1px solid rgba(255,255,255,0.12);letter-spacing:0.3px;">Reel Blocked</span>';
+                    shield.style.cssText = 'position:absolute!important;inset:0!important;width:100%!important;height:100%!important;z-index:99!important;touch-action:pan-y!important;background:rgba(0,0,0,0.72)!important;border-radius:inherit!important;overflow:hidden!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;cursor:not-allowed!important;backdrop-filter:blur(8px)!important;-webkit-backdrop-filter:blur(8px)!important;box-sizing:border-box!important;pointer-events:auto!important;';
+
+                    shield.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:12px;text-align:center;pointer-events:none;">' +
+                        '<div style="background:rgba(255,255,255,0.12);border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,0.18);">' +
+                            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+                                '<rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>' +
+                                '<line x1="16" y1="2" x2="16" y2="22"></line>' +
+                                '<line x1="8" y1="2" x2="8" y2="22"></line>' +
+                                '<line x1="2" y1="12" x2="22" y2="12"></line>' +
+                                '<line x1="2" y1="7" x2="8" y2="7"></line>' +
+                                '<line x1="2" y1="17" x2="8" y2="17"></line>' +
+                                '<line x1="16" y1="7" x2="22" y2="7"></line>' +
+                                '<line x1="16" y1="17" x2="22" y2="17"></line>' +
+                            '</svg>' +
+                        '</div>' +
+                        '<span style="background:rgba(20,20,20,0.92);color:#eee;font-size:12px;font-weight:600;padding:5px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);letter-spacing:0.3px;">Reel Blocked</span>' +
+                    '</div>';
 
                     var swallow = function(e) {
                         e.stopPropagation();
@@ -173,8 +289,38 @@ struct InstagramWebView: UIViewRepresentable {
                         div[data-visualcompletion="loading-state"] {
                             display: none !important;
                         }
+
+                        /* 6. Definitively prevent video elements inside DM reel cards from rendering or playing */
+                        .minigram-reel-card video,
+                        [data-minigram-card="true"] video,
+                        div[role="region"] a[href*="/reel/"] video,
+                        div[role="region"] a[href*="/reels/"] video,
+                        div[role="region"] a[href*="/p/"] video {
+                            display: none !important;
+                            visibility: hidden !important;
+                            pointer-events: none !important;
+                            opacity: 0 !important;
+                            height: 0 !important;
+                            width: 0 !important;
+                        }
+
+                        /* 7. Ensure shielded reel cards maintain relative positioning and clipping */
+                        .minigram-reel-card,
+                        [data-minigram-card="true"] {
+                            position: relative !important;
+                            overflow: hidden !important;
+                        }
                     `;
                     (document.head || document.documentElement).appendChild(filterStyle);
+                }
+
+                if (!isStories() && window.location.pathname.toLowerCase().includes('/direct')) {
+                    var dmVideos = document.querySelectorAll('div[role="region"] video, div[role="feed"] video, .minigram-reel-card video');
+                    dmVideos.forEach(function(v) {
+                        if (!v.paused) v.pause();
+                        v.muted = true;
+                        v.preload = 'none';
+                    });
                 }
 
                 applyReelShields();
