@@ -1,4 +1,4 @@
-name: Build MiniGram iOS App
+name: Build MiniGram Apps
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build Unsigned IPA
+  build-ios:
+    name: Build MiniGram iOS IPA
     runs-on: macos-15
 
     steps:
@@ -53,4 +53,34 @@ jobs:
         with:
           name: MiniGram-iOS
           path: MiniGram.ipa
+          retention-days: 14
+
+  build-android:
+    name: Build MiniGram Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK with Gradle
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Upload MiniGram APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiniGram-Android
+          path: android/app/build/outputs/apk/release/*.apk
           retention-days: 14
