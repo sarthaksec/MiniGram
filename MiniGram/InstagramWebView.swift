@@ -8,6 +8,12 @@ struct InstagramWebView: UIViewRepresentable {
 
         let script = """
         (function() {
+            'use strict';
+
+            function isStories() {
+                return window.location.pathname.toLowerCase().startsWith('/stories');
+            }
+
             function isAuthPage() {
                 var p = window.location.pathname.toLowerCase();
                 return p.includes('/accounts/login') ||
@@ -17,10 +23,112 @@ struct InstagramWebView: UIViewRepresentable {
                        document.querySelector('input[type="password"]') !== null;
             }
 
-            function isStories() {
-                return window.location.pathname.toLowerCase().startsWith('/stories');
+            // =========================================================================
+            // 1. NETWORK INTERCEPTION: Kill Reels Pagination & Chaining Queries
+            // =========================================================================
+            const originalFetch = window.fetch;
+            window.fetch = async function(...args) {
+                const url = String(args[0]?.url || args[0] || '');
+                const options = args[1] || {};
+                const headers = options.headers || {};
+                const friendlyName = headers['X-FB-Friendly-Name'] || headers['x-fb-friendly-name'] || '';
+
+                const isClipsFeed = url.includes('/api/v1/clips/') ||
+                                    url.includes('PolarisClips') ||
+                                    friendlyName.includes('PolarisClips') ||
+                                    (url.includes('/graphql/query') && options.body && String(options.body).includes('xdt_api__v1__clips'));
+
+                if (isClipsFeed) {
+                    console.warn('[MiniGram Network] Blocked Reels pagination query:', friendlyName || url);
+                    const emptyPayload = JSON.stringify({
+                        data: {
+                            xdt_api__v1__clips: {
+                                edges: [],
+                                page_info: { has_next_page: false, end_cursor: null }
+                            }
+                        },
+                        status: 'ok'
+                    });
+                    return new Response(emptyPayload, {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                return originalFetch.apply(this, args);
+            };
+
+            // =========================================================================
+            // 2. DOM SHIELDING: Physical Inert Click Sink with Scroll Preservation
+            // =========================================================================
+            function applyReelShields() {
+                if (isStories() || isAuthPage()) return;
+
+                const mediaLinks = document.querySelectorAll('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"]');
+                mediaLinks.forEach(function(link) {
+                    var card = link.closest('div[role="button"], div[tabindex="0"], div[data-pressable-container="true"]') || link.parentElement;
+                    if (!card || card.dataset.minigramShielded === 'true') return;
+
+                    card.dataset.minigramShielded = 'true';
+                    card.style.position = 'relative';
+
+                    var shield = document.createElement('div');
+                    shield.className = 'minigram-reel-shield';
+                    shield.style.cssText = 'position:absolute!important;inset:0!important;z-index:99!important;touch-action:pan-y!important;background:rgba(0,0,0,0.55)!important;border-radius:12px!important;display:flex!important;align-items:center!important;justify-content:center!important;cursor:not-allowed!important;backdrop-filter:blur(3px)!important;';
+                    shield.innerHTML = '<span style="background:rgba(20,20,20,0.92);color:#aaa;font-size:11px;font-weight:600;padding:5px 10px;border-radius:8px;pointer-events:none;border:1px solid rgba(255,255,255,0.12);letter-spacing:0.3px;">Reel Blocked</span>';
+
+                    var swallow = function(e) {
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        if (e.cancelable && e.type !== 'touchend') e.preventDefault();
+                    };
+
+                    shield.addEventListener('click', swallow, true);
+                    shield.addEventListener('pointerup', swallow, true);
+                    shield.addEventListener('touchend', swallow, true);
+
+                    card.appendChild(shield);
+                });
             }
 
+            // =========================================================================
+            // 3. FULLSCREEN VIEWER CLEAN DISMISSAL (React-Safe, No DOM Surgery)
+            // =========================================================================
+            function killModalViewer() {
+                if (isStories() || isAuthPage()) return;
+
+                var overlays = document.querySelectorAll('div[role="dialog"], div[style*="position: fixed"]');
+                overlays.forEach(function(overlay) {
+                    var hasReel = overlay.querySelector('video, a[href*="/reel/"], svg[aria-label="Audio"], svg[aria-label="Remix"]');
+                    if (!hasReel) return;
+
+                    if (overlay.querySelector('[aria-label*="Story"], [aria-label*="story"]')) return;
+
+                    console.warn('[MiniGram] Dismissing Reel viewer cleanly.');
+
+                    var vids = overlay.querySelectorAll('video');
+                    vids.forEach(function(v) { v.pause(); v.src = ''; });
+
+                    var closeBtn = overlay.querySelector(
+                        'div[role="button"][aria-label="Back"], ' +
+                        'div[role="button"][aria-label="Close"], ' +
+                        'button[aria-label="Back"], ' +
+                        'button[aria-label="Close"], ' +
+                        'svg[aria-label="Back"], ' +
+                        'svg[aria-label="Close"]'
+                    );
+
+                    if (closeBtn) {
+                        var target = closeBtn.closest('div[role="button"], button') || closeBtn;
+                        target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    } else {
+                        window.history.back();
+                    }
+                });
+            }
+
+            // =========================================================================
+            // 4. CSS INJECTION & MUTATION OBSERVER ENGINE
+            // =========================================================================
             function updateStyles() {
                 if (isAuthPage()) {
                     var filter = document.getElementById('minigram-filter-style');
@@ -65,87 +173,13 @@ struct InstagramWebView: UIViewRepresentable {
                         div[data-visualcompletion="loading-state"] {
                             display: none !important;
                         }
-
-                        /* 6. In DMs: mute shared Reel & Post links visually */
-                        a[href*="/reel/"], 
-                        a[href*="/reels/"],
-                        a[href*="/p/"] {
-                            opacity: 0.3 !important;
-                            filter: grayscale(1) !important;
-                            cursor: not-allowed !important;
-                        }
                     `;
                     (document.head || document.documentElement).appendChild(filterStyle);
                 }
 
-                neutralizeReels();
+                applyReelShields();
+                killModalViewer();
             }
-
-            function neutralizeReels() {
-                if (isStories()) return;
-
-                // Find all links to reels or posts
-                var links = document.querySelectorAll('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"]');
-                links.forEach(function(link) {
-                    link.style.pointerEvents = 'none';
-                    link.style.cursor = 'not-allowed';
-                    link.style.opacity = '0.3';
-                    link.style.filter = 'grayscale(100%)';
-
-                    // Lock the clickable message card container
-                    var card = link.closest('div[role="button"], div[tabindex="0"]');
-                    if (card && card.getAttribute('data-minigram-locked') !== 'true') {
-                        card.setAttribute('data-minigram-locked', 'true');
-                        card.style.pointerEvents = 'none';
-                        card.style.cursor = 'not-allowed';
-                        card.style.opacity = '0.3';
-                        card.style.filter = 'grayscale(100%)';
-                    }
-                });
-
-                // Remove any reel/post modal dialogs mounted outside Stories
-                var dialogs = document.querySelectorAll('div[role="dialog"]');
-                dialogs.forEach(function(d) {
-                    if (d.querySelector('video') || d.querySelector('a[href*="/reel/"]') || d.querySelector('a[href*="/p/"]')) {
-                        console.warn('[MiniGram] Removed Reel/Post modal dialog');
-                        d.remove();
-                    }
-                });
-
-                // Pause any non-story videos
-                var videos = document.querySelectorAll('video');
-                videos.forEach(function(v) {
-                    v.pause();
-                    v.removeAttribute('src');
-                });
-            }
-
-            // Capture-phase click blocker: stops clicks on any reel/post element before React sees it
-            function isReelClick(target) {
-                if (!target) return false;
-                if (target.closest && target.closest('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"]')) return true;
-
-                var curr = target;
-                for (var i = 0; i < 5 && curr && curr !== document.body && curr !== document.documentElement; i++) {
-                    if (curr.getAttribute && curr.getAttribute('data-minigram-locked') === 'true') return true;
-                    var aria = (curr.getAttribute && curr.getAttribute('aria-label')) || '';
-                    if (aria && (aria.toLowerCase().includes('reel') || aria.toLowerCase().includes('post'))) return true;
-                    if (curr.tagName === 'VIDEO') return true;
-                    curr = curr.parentElement;
-                }
-                return false;
-            }
-
-            document.addEventListener('click', function(e) {
-                if (isStories()) return;
-                if (isReelClick(e.target)) {
-                    console.warn('[MiniGram] Captured and blocked click on DM Reel/Post');
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.stopImmediatePropagation();
-                    return false;
-                }
-            }, true);
 
             updateStyles();
             document.addEventListener('DOMContentLoaded', updateStyles);
@@ -156,11 +190,13 @@ struct InstagramWebView: UIViewRepresentable {
                 debounceTimer = setTimeout(function() {
                     updateStyles();
                     debounceTimer = null;
-                }, 100);
+                }, 80);
             });
             observer.observe(document.documentElement, { childList: true, subtree: true });
 
-            // Client-Side Blocker for Reels, Posts & Explore pushState/replaceState
+            // =========================================================================
+            // 5. CLIENT-SIDE ROUTING GUARDS
+            // =========================================================================
             function isBlocked(url) {
                 if (!url) return false;
                 var target = String(url).toLowerCase();
@@ -193,7 +229,7 @@ struct InstagramWebView: UIViewRepresentable {
                 setTimeout(updateStyles, 50);
             });
 
-            // Watchdog: If the browser URL somehow lands on a reel or post outside stories, redirect back to chat
+            // Watchdog: If URL somehow lands on a reel or post outside stories, return to chat
             setInterval(function() {
                 if (!isStories()) {
                     var path = window.location.pathname.toLowerCase();
